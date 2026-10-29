@@ -1,0 +1,4 @@
+﻿[
+  {"id":"drive0","letter":"C:","model":"OS Drive","serial":"real-C-OS","capacityBytes":1798739873792,"freeBytes":1163695415296,"temperature":null,"wearPercent":null,"reallocated":null,"pending":null,"crcErrors":null,"powerOnHours":null,"type":"NVMe","healthStatus":null},
+  {"id":"drive1","letter":"D:","model":"Data Drive","serial":"real-D-OS","capacityBytes":489760485376,"freeBytes":488891297792,"temperature":null,"wearPercent":null,"reallocated":null,"pending":null,"crcErrors":null,"powerOnHours":null,"type":"HDD","healthStatus":null}
+]
