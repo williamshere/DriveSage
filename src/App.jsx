@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import DriveDetail from './pages/DriveDetail.jsx'
@@ -107,6 +107,11 @@ export default function App(){
   const dupes = useMemo(()=> findDuplicateGroups(files), [files])
   const largest = useMemo(()=> largestFiles(files, 20), [files])
 
+  const handleSelectDrive = useCallback((id) => {
+    setSelectedId(id)
+    setPage('drive')
+  }, [])
+
   const runScan = (phase='Scanning disk…')=>{
     if(scanning) return
     setScanning(true); setProgress({pct:6, phase})
@@ -176,7 +181,7 @@ export default function App(){
             <span style={{color:'var(--accent)', fontWeight:700}}>● Real drives connected</span> <span className="mono" style={{color:'var(--muted)', marginLeft:8}}>{drives.map(d=>`${d.letter} ${d.model} ${formatBytes(d.capacityBytes)} free ${formatBytes(d.freeBytes)}`).join(' • ')}</span>
           </div>
         )}
-        {page==='dashboard' && <Dashboard drives={drives} histories={histories} settings={settings} onSelectDrive={(id)=>{setSelectedId(id); setPage('drive')}} onScan={()=>runScan('Scanning all drives…')} scanning={scanning} onStopScan={stopScan} progress={progress} />}
+        {page==='dashboard' && <Dashboard drives={drives} histories={histories} settings={settings} onSelectDrive={handleSelectDrive} onScan={()=>runScan('Scanning all drives…')} scanning={scanning} onStopScan={stopScan} progress={progress} />}
         {page==='drive' && <DriveDetail drive={selectedDrive} history={histories.find(h=>h.driveId===selectedId)} drives={drives} selectedId={selectedId} onSelect={setSelectedId} />}
         {page==='map' && <StorageMap tree={tree} scanning={scanning} progress={progress} onScan={()=>runScan('Building storage map…')} onStopScan={stopScan} />}
         {page==='dupes' && <Duplicates files={files} dupes={dupes} largest={largest} scanning={scanning} progress={progress} onScan={()=>runScan('Finding duplicates…')} onStopScan={stopScan} />}
