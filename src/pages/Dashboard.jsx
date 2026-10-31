@@ -2,9 +2,10 @@
 import { computeHealth, bandColor } from '../lib/health.js'
 import { checkAlerts } from '../lib/alerts.js'
 import { exportDrivesCsv, copyDriveInfo } from '../lib/export.js'
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
+import React from 'react'
 
-function HealthRing({score,band}){
+const HealthRing = React.memo(function HealthRing({score,band}){
   const c=bandColor(band)
   return (
     <div className="health-ring" style={{background:`conic-gradient(${c} ${score}%, var(--panel-3) 0)`}}>
@@ -15,8 +16,8 @@ function HealthRing({score,band}){
       </div>
     </div>
   )
-}
-function DriveCard({drive, history, onClick}){
+})
+const DriveCard = React.memo(function DriveCard({drive, history, onClick}){
   const hs = computeHealth({
     wearPercent: drive.wearPercent ?? 0,
     tempHistory: history?.temps || [],
@@ -83,16 +84,21 @@ function DriveCard({drive, history, onClick}){
       </div>
     </div>
   )
-}
+})
 
 export default function Dashboard({ drives, histories, settings, onSelectDrive, onScan, scanning, onStopScan, progress }){
-  const alerts=[]
-  for(const d of drives){
-    const hs=checkAlerts(d, { tempWarning: settings.tempWarning, tempCritical: settings.tempCritical, wearWarning: settings.wearWarning, freeSpaceWarningPct: settings.freeSpaceWarning }, Date.now())
-    for(const a of hs) alerts.push({...a, driveId:d.id})
-  }
-  const totalBytes = drives.reduce((a,b)=>a+(b.capacityBytes||0),0)
-  const freeBytes = drives.reduce((a,b)=>a+(b.freeBytes||0),0)
+  const alerts = useMemo(() => {
+    const alerts=[]
+    for(const d of drives){
+      const hs=checkAlerts(d, { tempWarning: settings.tempWarning, tempCritical: settings.tempCritical, wearWarning: settings.wearWarning, freeSpaceWarningPct: settings.freeSpaceWarning }, Date.now())
+      for(const a of hs) alerts.push({...a, driveId:d.id})
+    }
+    return alerts
+  }, [drives, settings])
+  const totalBytes = useMemo(() => drives.reduce((a,b)=>a+(b.capacityBytes||0),0), [drives])
+  const freeBytes = useMemo(() => drives.reduce((a,b)=>a+(b.freeBytes||0),0), [drives])
+  const sortedCapacities = useMemo(() => [...drives].sort((a,b)=> (b.capacityBytes-b.freeBytes)/b.capacityBytes - (a.capacityBytes-a.freeBytes)/a.capacityBytes), [drives])
+
   return (
     <div>
       <div className="topbar">
@@ -148,7 +154,7 @@ export default function Dashboard({ drives, histories, settings, onSelectDrive, 
         </div>
         <div className="card"><div className="card-head"><div className="card-title">Capacity at a glance</div><span className="card-sub mono">largest bar = most full</span></div>
           <div className="card-body">
-            {[...drives].sort((a,b)=> (b.capacityBytes-b.freeBytes)/b.capacityBytes - (a.capacityBytes-a.freeBytes)/a.capacityBytes).map(d=>{
+            {sortedCapacities.map(d=>{
               const pct=Math.round((1-d.freeBytes/d.capacityBytes)*100)
               return <div key={d.id} style={{marginBottom:12}}>
                 <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><b>{d.letter}</b><span className="mono">{pct}%</span></div>
