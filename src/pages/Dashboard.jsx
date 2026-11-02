@@ -2,7 +2,7 @@
 import { computeHealth, bandColor } from '../lib/health.js'
 import { checkAlerts } from '../lib/alerts.js'
 import { exportDrivesCsv, copyDriveInfo } from '../lib/export.js'
-import { useState } from 'react'
+import { useState, useMemo, memo } from 'react'
 
 function HealthRing({score,band}){
   const c=bandColor(band)
@@ -16,7 +16,7 @@ function HealthRing({score,band}){
     </div>
   )
 }
-function DriveCard({drive, history, onClick}){
+const DriveCard = memo(function DriveCard({drive, history, onSelect}){
   const hs = computeHealth({
     wearPercent: drive.wearPercent ?? 0,
     tempHistory: history?.temps || [],
@@ -48,7 +48,7 @@ function DriveCard({drive, history, onClick}){
     }
   }
   return (
-    <div className="card drive-card" onClick={onClick} style={{position:'relative'}}>
+    <div className="card drive-card" onClick={() => onSelect(drive.id)} style={{position:'relative'}}>
       <div className="drive-top">
         <div style={{minWidth:0}}>
           <div className="drive-letter">{drive.letter} <span style={{fontSize:11,color:'var(--muted)',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',marginLeft:6}}>{drive.type}</span></div>
@@ -83,16 +83,37 @@ function DriveCard({drive, history, onClick}){
       </div>
     </div>
   )
-}
+})
 
 export default function Dashboard({ drives, histories, settings, onSelectDrive, onScan, scanning, onStopScan, progress }){
-  const alerts=[]
-  for(const d of drives){
-    const hs=checkAlerts(d, { tempWarning: settings.tempWarning, tempCritical: settings.tempCritical, wearWarning: settings.wearWarning, freeSpaceWarningPct: settings.freeSpaceWarning }, Date.now())
-    for(const a of hs) alerts.push({...a, driveId:d.id})
-  }
-  const totalBytes = drives.reduce((a,b)=>a+(b.capacityBytes||0),0)
-  const freeBytes = drives.reduce((a,b)=>a+(b.freeBytes||0),0)
+  const alerts = useMemo(() => {
+    const arr = []
+    for(const d of drives){
+      const hs = checkAlerts(d, { tempWarning: settings.tempWarning, tempCritical: settings.tempCritical, wearWarning: settings.wearWarning, freeSpaceWarningPct: settings.freeSpaceWarning }, Date.now())
+      for(const a of hs) arr.push({...a, driveId:d.id})
+    }
+    return arr
+  }, [drives, settings])
+
+  const totalBytes = useMemo(() => drives.reduce((a,b)=>a+(b.capacityBytes||0),0), [drives])
+  const freeBytes = useMemo(() => drives.reduce((a,b)=>a+(b.freeBytes||0),0), [drives])
+
+  const healthOverviewList = useMemo(() => drives.map(d=>{
+    const hs=computeHealth({wearPercent:d.wearPercent??0, maxTemp:d.temperature??0, tempHistory:histories.find(h=>h.driveId===d.id)?.temps||[], reallocated:d.reallocated??0, pending:d.pending??0, crcErrors:d.crcErrors??0})
+    return <div key={d.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid var(--border)'}}>
+      <span className="mono" style={{fontSize:13}}>{d.letter} {d.model.split(' ').slice(0,2).join(' ')}</span>
+      <span style={{display:'flex',gap:8,alignItems:'center'}}><span className="mono" style={{fontWeight:800}}>{hs.score}</span><span className={`badge ${hs.band==='Healthy'?'badge-healthy':hs.band==='Watch'?'badge-watch':'badge-risk'}`} style={{fontSize:10}}>{hs.band}</span></span>
+    </div>
+  }), [drives, histories])
+
+  const capacityOverviewList = useMemo(() => [...drives].sort((a,b)=> (b.capacityBytes-b.freeBytes)/b.capacityBytes - (a.capacityBytes-a.freeBytes)/a.capacityBytes).map(d=>{
+    const pct=Math.round((1-d.freeBytes/d.capacityBytes)*100)
+    return <div key={d.id} style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><b>{d.letter}</b><span className="mono">{pct}%</span></div>
+      <div className={`bar ${pct>85?'warn':''}`} style={{marginTop:6}}><i style={{width:`${pct}%`}}/></div>
+    </div>
+  }), [drives])
+
   return (
     <div>
       <div className="topbar">
@@ -130,31 +151,19 @@ export default function Dashboard({ drives, histories, settings, onSelectDrive, 
       )}
 
       <div className="grid grid-3">
-        {drives.map(d=> <DriveCard key={d.id} drive={d} history={histories.find(h=>h.driveId===d.id)} onClick={()=>onSelectDrive(d.id)} />)}
+        {drives.map(d=> <DriveCard key={d.id} drive={d} history={histories.find(h=>h.driveId===d.id)} onSelect={onSelectDrive} />)}
       </div>
 
       <div className="grid grid-3" style={{marginTop:14}}>
         <div className="card"><div className="card-head"><div className="card-title">Health overview</div></div>
           <div className="card-body">
-            {drives.map(d=>{
-              const hs=computeHealth({wearPercent:d.wearPercent??0, maxTemp:d.temperature??0, tempHistory:histories.find(h=>h.driveId===d.id)?.temps||[], reallocated:d.reallocated??0, pending:d.pending??0, crcErrors:d.crcErrors??0})
-              return <div key={d.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid var(--border)'}}>
-                <span className="mono" style={{fontSize:13}}>{d.letter} {d.model.split(' ').slice(0,2).join(' ')}</span>
-                <span style={{display:'flex',gap:8,alignItems:'center'}}><span className="mono" style={{fontWeight:800}}>{hs.score}</span><span className={`badge ${hs.band==='Healthy'?'badge-healthy':hs.band==='Watch'?'badge-watch':'badge-risk'}`} style={{fontSize:10}}>{hs.band}</span></span>
-              </div>
-            })}
+            {healthOverviewList}
             <div style={{marginTop:10, fontSize:11, color:'var(--muted)'}}>40% lifespan • 30% temperature • 30% errors — breakdown per drive</div>
           </div>
         </div>
         <div className="card"><div className="card-head"><div className="card-title">Capacity at a glance</div><span className="card-sub mono">largest bar = most full</span></div>
           <div className="card-body">
-            {[...drives].sort((a,b)=> (b.capacityBytes-b.freeBytes)/b.capacityBytes - (a.capacityBytes-a.freeBytes)/a.capacityBytes).map(d=>{
-              const pct=Math.round((1-d.freeBytes/d.capacityBytes)*100)
-              return <div key={d.id} style={{marginBottom:12}}>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><b>{d.letter}</b><span className="mono">{pct}%</span></div>
-                <div className={`bar ${pct>85?'warn':''}`} style={{marginTop:6}}><i style={{width:`${pct}%`}}/></div>
-              </div>
-            })}
+            {capacityOverviewList}
             <button className="btn btn-sm" style={{marginTop:8}} onClick={()=>exportDrivesCsv(drives)}>Download CSV report</button>
           </div>
         </div>
