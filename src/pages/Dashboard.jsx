@@ -114,6 +114,13 @@ export default function Dashboard({ drives, histories, settings, onSelectDrive, 
     </div>
   }), [drives])
 
+  // ⚡ Bolt: Memoize the mapping to DriveCards to prevent O(N^2) histories.find calls
+  // on every render (especially during rapid progress ticks from scanning)
+  const driveCardsList = useMemo(() => drives.map(d=> <DriveCard key={d.id} drive={d} history={histories.find(h=>h.driveId===d.id)} onSelect={onSelectDrive} />), [drives, histories, onSelectDrive])
+
+  // ⚡ Bolt: Memoize safety list drives to prevent re-creation during ticks
+  const realDrivesSafetyList = useMemo(() => drives.map(d=> <div key={d.id} className="mono" style={{fontSize:11, marginTop:4}}>{d.letter} {d.model} — {formatBytes(d.capacityBytes)} free {formatBytes(d.freeBytes)} {d.temperature!=null? `• ${d.temperature}°C` : '• temp unavailable'}</div>), [drives])
+
   return (
     <div>
       <div className="topbar">
@@ -151,7 +158,7 @@ export default function Dashboard({ drives, histories, settings, onSelectDrive, 
       )}
 
       <div className="grid grid-3">
-        {drives.map(d=> <DriveCard key={d.id} drive={d} history={histories.find(h=>h.driveId===d.id)} onSelect={onSelectDrive} />)}
+        {driveCardsList}
       </div>
 
       <div className="grid grid-3" style={{marginTop:14}}>
@@ -172,7 +179,7 @@ export default function Dashboard({ drives, histories, settings, onSelectDrive, 
             <div style={{color:'var(--text)',fontWeight:700}}>Read-only hardware access</div>
             SMART + capacity via Windows APIs only (<code>Get-PhysicalDisk</code>, <code>Get-StorageReliabilityCounter</code>, MSStorageDriver). No writes to firmware, clocks or RAID.<br/>
             <div style={{color:'var(--text)',fontWeight:700,marginTop:10}}>Real drives on this machine</div>
-            {drives.map(d=> <div key={d.id} className="mono" style={{fontSize:11, marginTop:4}}>{d.letter} {d.model} — {formatBytes(d.capacityBytes)} free {formatBytes(d.freeBytes)} {d.temperature!=null? `• ${d.temperature}°C` : '• temp unavailable'}</div>)}
+            {realDrivesSafetyList}
             <div style={{color:'var(--text)',fontWeight:700,marginTop:10}}>Deletions go to Recycle Bin</div>
             Permanent delete only on explicit choice per run. Every action logged. <code>unavailable</code> shown for any unreadable attribute.
           </div>
