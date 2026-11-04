@@ -1,11 +1,17 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { formatBytes } from '../lib/drives.js'
 
 function Treemap({ node, onDrill, path }){
-  const children = node.children || []
-  if(children.length===0) return <div className="mono" style={{fontSize:12,color:'var(--muted)'}}>No children.</div>
-  // sort largest first
-  const sorted=[...children].sort((a,b)=>b.size-a.size)
+  const children = node.children
+  // ⚡ Bolt: memoize sorting to prevent re-sorting on every progress tick.
+  // Hook MUST be declared before the early return!
+  const sorted = useMemo(() => {
+    if (!children) return []
+    return [...children].sort((a,b)=>b.size-a.size)
+  }, [children])
+
+  if(!children || children.length===0) return <div className="mono" style={{fontSize:12,color:'var(--muted)'}}>No children.</div>
+
   // simple row layout: first row large, rest grid
   return (
     <div className="treemap">
