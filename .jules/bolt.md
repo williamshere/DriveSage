@@ -5,3 +5,7 @@
 ## 2026-11-03 - Memoizing DriveCards lookup
 **Learning:** During rapid scan ticks, React processes every state change by executing `.map()` containing an $O(N^2)$ `.find()` to pair `histories` with `drives`. Without memoization, this recalculates on every progress tick causing heavy CPU usage and UI stutter.
 **Action:** Use `useMemo` for inline list renderings to avoid constant reallocation and repeated O(N^2) matching lookups, especially when list dependencies haven't changed.
+
+## 2024-11-04 - React Memoization and Hook Placement
+**Learning:** Frequent state updates (like scan progress updates every 260ms) trigger rapid re-renders. If expensive array operations (like `.sort()`, `.reduce()`, or `.map()` over large datasets) are done inline, they will severely degrade performance. Additionally, when wrapping these inline operations in `useMemo`, it is absolutely critical to place the hook declarations *before* any early return statements, otherwise React will throw a "Rules of Hooks" error at runtime.
+**Action:** Always memoize list mappings and sorting in components that receive fast-updating props (like `progress`). Verify that `useMemo` is placed at the top level of the component, before any conditional renders or early returns.
