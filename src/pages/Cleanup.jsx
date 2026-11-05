@@ -1,10 +1,30 @@
+import { useMemo, useCallback } from 'react'
 import { formatBytes } from '../lib/drives.js'
 import { CLEANUP_CATEGORIES, buildPreview } from '../lib/cleanup.js'
 
 export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, deletionMode, setDeletionMode, onPreview, preview, onExecute, executing, log }){
-  const toggle=(id)=>{
+  const toggle = useCallback((id)=>{
     setEnabledIds(ids=> ids.includes(id)? ids.filter(x=>x!==id) : [...ids, id])
-  }
+  }, [setEnabledIds])
+
+  // ⚡ Bolt: memoize category list rendering to avoid recalculating file counts and sizes on every render
+  const categoriesList = useMemo(() => {
+    return CLEANUP_CATEGORIES.map(cat=>{
+      const files=cleanupFiles[cat.id]||[]
+      const bytes=files.reduce((a,b)=>a+b.size,0)
+      const on=enabledIds.includes(cat.id)
+      return (
+        <label key={cat.id} style={{display:'flex',gap:10,alignItems:'flex-start',padding:'10px',borderRadius:10,border:`1px solid ${on?'#2a6b5a':'var(--border)'}`,background: on? 'var(--teal-dim)':'var(--panel-2)',cursor:'pointer'}}>
+          <input type="checkbox" className="check" checked={on} onChange={()=>toggle(cat.id)} />
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:700,fontSize:13}}>{cat.label}</div>
+            <div style={{fontSize:11,color:'var(--muted)'}}>{cat.desc}</div>
+            <div className="mono" style={{fontSize:11,color:'var(--muted)',marginTop:4}}>{files.length} files • {formatBytes(bytes)}</div>
+          </div>
+        </label>
+      )
+    })
+  }, [cleanupFiles, enabledIds, toggle])
   return (
     <div>
       <div className="topbar">
@@ -30,21 +50,7 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, delet
         <div className="card">
           <div className="card-head"><div className="card-title">Categories</div><span className="card-sub">allow-list only</span></div>
           <div className="card-body" style={{display:'flex',flexDirection:'column',gap:10}}>
-            {CLEANUP_CATEGORIES.map(cat=>{
-              const files=cleanupFiles[cat.id]||[]
-              const bytes=files.reduce((a,b)=>a+b.size,0)
-              const on=enabledIds.includes(cat.id)
-              return (
-                <label key={cat.id} style={{display:'flex',gap:10,alignItems:'flex-start',padding:'10px',borderRadius:10,border:`1px solid ${on?'#2a6b5a':'var(--border)'}`,background: on? 'var(--teal-dim)':'var(--panel-2)',cursor:'pointer'}}>
-                  <input type="checkbox" className="check" checked={on} onChange={()=>toggle(cat.id)} />
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontWeight:700,fontSize:13}}>{cat.label}</div>
-                    <div style={{fontSize:11,color:'var(--muted)'}}>{cat.desc}</div>
-                    <div className="mono" style={{fontSize:11,color:'var(--muted)',marginTop:4}}>{files.length} files • {formatBytes(bytes)}</div>
-                  </div>
-                </label>
-              )
-            })}
+            {categoriesList}
             <button className="btn btn-primary" onClick={onPreview} disabled={executing || enabledIds.length===0}>Build preview</button>
             {deletionMode==='permanent' && <div style={{fontSize:11,color:'var(--red)',fontWeight:700}}>Permanent delete will bypass Recycle Bin for this run.</div>}
           </div>
