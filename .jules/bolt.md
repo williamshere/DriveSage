@@ -9,3 +9,7 @@
 ## 2024-11-04 - React Memoization and Hook Placement
 **Learning:** Frequent state updates (like scan progress updates every 260ms) trigger rapid re-renders. If expensive array operations (like `.sort()`, `.reduce()`, or `.map()` over large datasets) are done inline, they will severely degrade performance. Additionally, when wrapping these inline operations in `useMemo`, it is absolutely critical to place the hook declarations *before* any early return statements, otherwise React will throw a "Rules of Hooks" error at runtime.
 **Action:** Always memoize list mappings and sorting in components that receive fast-updating props (like `progress`). Verify that `useMemo` is placed at the top level of the component, before any conditional renders or early returns.
+
+## 2026-11-04 - Stabilizing Recharts Data Arrays
+**Learning:** During rapid scan ticks, providing inline array derivations to complex children like Recharts components (`<LineChart>`, `<AreaChart>`) triggers full re-renders and heavy layout thrashing, even if the actual chart data hasn't changed.
+**Action:** Always wrap data array transformations for Recharts components in `useMemo` hooks, providing them with referentially stable arrays. When moving inline logic to hooks, remember to place the hooks before any early returns and safely handle optional variables (e.g., `drive?.temperature`).
