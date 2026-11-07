@@ -2,6 +2,7 @@
 import { computeHealth, bandColor } from '../lib/health.js'
 import { checkAlerts } from '../lib/alerts.js'
 import { exportDrivesCsv, copyDriveInfo } from '../lib/export.js'
+import { summarizeSystemStatus } from '../lib/recommendations.js'
 import { useState, useMemo, memo } from 'react'
 
 function HealthRing({score,band}){
@@ -97,6 +98,7 @@ export default function Dashboard({ drives, histories, settings, onSelectDrive, 
 
   const totalBytes = useMemo(() => drives.reduce((a,b)=>a+(b.capacityBytes||0),0), [drives])
   const freeBytes = useMemo(() => drives.reduce((a,b)=>a+(b.freeBytes||0),0), [drives])
+  const systemSummary = useMemo(() => summarizeSystemStatus(drives, histories, settings), [drives, histories, settings])
 
   const healthOverviewList = useMemo(() => drives.map(d=>{
     const hs=computeHealth({wearPercent:d.wearPercent??0, maxTemp:d.temperature??0, tempHistory:histories.find(h=>h.driveId===d.id)?.temps||[], reallocated:d.reallocated??0, pending:d.pending??0, crcErrors:d.crcErrors??0})
@@ -161,7 +163,7 @@ export default function Dashboard({ drives, histories, settings, onSelectDrive, 
         {driveCardsList}
       </div>
 
-      <div className="grid grid-3" style={{marginTop:14}}>
+      <div className="grid grid-4" style={{marginTop:14}}>
         <div className="card"><div className="card-head"><div className="card-title">Health overview</div></div>
           <div className="card-body">
             {healthOverviewList}
@@ -172,6 +174,23 @@ export default function Dashboard({ drives, histories, settings, onSelectDrive, 
           <div className="card-body">
             {capacityOverviewList}
             <button className="btn btn-sm" style={{marginTop:8}} onClick={()=>exportDrivesCsv(drives)}>Download CSV report</button>
+          </div>
+        </div>
+        <div className="card"><div className="card-head"><div className="card-title">Action center</div><span className={`badge ${systemSummary.status==='Healthy'?'badge-healthy':systemSummary.status==='Watch'?'badge-watch':'badge-risk'}`} style={{fontSize:10}}>{systemSummary.status}</span></div>
+          <div className="card-body">
+            <div className="stat" style={{fontSize:18, lineHeight:1.2}}>{systemSummary.worstDrive ? systemSummary.worstDrive.letter : '—'} <small>{systemSummary.worstDrive ? `${systemSummary.worstDrive.score} / 100` : 'No drives'}</small></div>
+            <div style={{fontSize:12, color:'var(--muted)', marginBottom:12}}>{systemSummary.summary}</div>
+            <div className="recommendation-list">
+              {systemSummary.recommendations.map((rec, index) => (
+                <div key={`${rec.drive || 'system'}-${index}`} className={`recommendation-item ${rec.priority}`}>
+                  <div className="recommendation-tag">{rec.priority}</div>
+                  <div>
+                    <div className="recommendation-title">{rec.title}</div>
+                    <div className="recommendation-detail">{rec.drive ? `${rec.drive} • ` : ''}{rec.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
         <div className="card"><div className="card-head"><div className="card-title">Safety & Real Data</div></div>

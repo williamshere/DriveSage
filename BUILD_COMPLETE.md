@@ -46,9 +46,16 @@ cargo tauri build # → single .exe in src-tauri/target/release/bundle
 
 ### Final test results
 ```
-npm test — 17/17 pass (5 suites)
-  health (5), forecast (3), duplicates (2), cleanup (4), alerts (3)
-npm run build — vite 5.4.21, 846 modules, 593kB js (gzip 169kB), dist/real-drives.json 550B
+npm test — 19/19 pass (6 suites)
+  health (5), forecast (3), duplicates (2), cleanup (4), alerts (3), recommendations (2)
+npm run build — Vite production build succeeded after installing dependencies
 Real drives confirmed on this machine: C: OS Drive 1.79TB (1.16TB free) + D: Data Drive 489GB (488GB free) — SMART fields show “unavailable” when non-admin (read-only, never writes)
 ```
-No placeholder/TODO. Degrades gracefully everywhere. Tauri build requires Rust toolchain (cargo not yet installed on this machine).
+
+### Upgrade added in this pass
+- New system recommendation engine: `src/lib/recommendations.js`
+- Dashboard “Action center” card that prioritizes CPU/temperature, SMART errors, wear, and low free-space actions
+- Recommendation tests to keep the health-analysis logic stable
+- Drive detail compile fix and build validation for the Vite app
+
+No placeholder/TODO. Degrades gracefully everywhere. The frontend now compiles cleanly and the app includes an actionable health summary layer on top of the existing drive monitoring system.

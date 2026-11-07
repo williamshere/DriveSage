@@ -3,7 +3,6 @@ import { formatBytes, formatTemp } from '../lib/drives.js'
 import { computeHealth, bandColor } from '../lib/health.js'
 import { estimateDaysUntilFull, formatForecast } from '../lib/forecast.js'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, AreaChart, Area } from 'recharts'
-import { useMemo } from 'react'
 
 export default function DriveDetail({ drive, history, drives, selectedId, onSelect }){
   // ⚡ Bolt: Drive detail memoization
@@ -31,6 +30,10 @@ export default function DriveDetail({ drive, history, drives, selectedId, onSele
       { name:'Temperature', value: drive.temperature, ok: (drive.temperature??0) < 50, fmt: v=> formatTemp(v) },
     ]
   }, [drive])
+
+  const driveOptions = useMemo(() => (drives || []).map(d => (
+    <option key={d.id} value={d.id}>{d.letter} — {d.model}</option>
+  )), [drives])
 
   if(!drive) return <div className="card" style={{padding:40,textAlign:'center',color:'var(--muted)'}}>Select a drive to inspect.</div>
 

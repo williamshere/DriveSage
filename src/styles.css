@@ -57,6 +57,7 @@ a{color:inherit}
 .btn-primary:hover{background:#35d6ad}
 .btn-ghost{background:transparent}
 .btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-sm{padding:8px 10px;font-size:11.5px}
 .badge{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:5px 8px;border-radius:999px;border:1px solid var(--border);background:var(--panel)}
 .badge-healthy{color:var(--green);border-color:#1f5a36;background:#13281c}
 .badge-watch{color:var(--amber);border-color:#5a4910;background:#2a2308}
@@ -92,6 +93,17 @@ a{color:inherit}
 .health-ring{width:86px;height:86px;border-radius:50%;display:grid;place-items:center;position:relative}
 .health-ring b{font-size:22px;letter-spacing:-.8px}
 .health-ring em{font-size:10px;color:var(--muted);font-style:normal;letter-spacing:.06em;text-transform:uppercase}
+.recommendation-list{display:flex;flex-direction:column;gap:8px}
+.recommendation-item{display:flex;gap:10px;padding:10px 10px;border:1px solid var(--border);border-radius:10px;background:var(--panel-2)}
+.recommendation-item.critical{border-color:rgba(224,82,82,.45);background:rgba(224,82,82,.06)}
+.recommendation-item.warning{border-color:rgba(232,163,23,.45);background:rgba(232,163,23,.06)}
+.recommendation-item.info{border-color:rgba(46,197,160,.45);background:rgba(46,197,160,.06)}
+.recommendation-tag{font-size:9px;letter-spacing:.08em;text-transform:uppercase;font-weight:800;padding:4px 6px;border-radius:999px;align-self:flex-start;border:1px solid var(--border);background:var(--panel);color:var(--muted)}
+.recommendation-item.critical .recommendation-tag{color:var(--red)}
+.recommendation-item.warning .recommendation-tag{color:var(--amber)}
+.recommendation-item.info .recommendation-tag{color:var(--green)}
+.recommendation-title{font-size:12px;font-weight:700;margin-bottom:3px}
+.recommendation-detail{font-size:11px;color:var(--muted);line-height:1.45}
 .breakdown{display:flex;gap:8px;flex-wrap:wrap}
 .breakdown span{font-size:11px;padding:6px 8px;border-radius:999px;background:var(--panel-2);border:1px solid var(--border);color:var(--muted)}
 .breakdown strong{color:var(--text)}
