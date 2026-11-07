@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { formatBytes, formatTemp } from '../lib/drives.js'
 import { computeHealth, bandColor } from '../lib/health.js'
 import { estimateDaysUntilFull, formatForecast } from '../lib/forecast.js'
@@ -38,7 +39,7 @@ export default function DriveDetail({ drive, history, drives, selectedId, onSele
       <div className="topbar">
         <h1 className="h1">Drive detail <small className="mono">{drive.letter} — {drive.model}</small></h1>
         <select className="select" style={{width:260}} value={selectedId} onChange={e=>onSelect(e.target.value)}>
-          {drives.map(d=> <option key={d.id} value={d.id}>{d.letter} {d.model}</option>)}
+          {driveOptions}
         </select>
       </div>
 

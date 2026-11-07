@@ -1,6 +1,39 @@
+import React, { useMemo } from 'react'
 import { formatBytes } from '../lib/drives.js'
 
 export default function Duplicates({ files, dupes, largest, scanning, progress, onScan, onStopScan }){
+
+  // ⚡ Bolt: memoize duplicate groups rendering to prevent nested array operations (reduce/map) on every scan progress tick
+  const duplicatesList = useMemo(() => {
+    if (!dupes || !dupes.groups) return null
+    return dupes.groups.map((g,i)=>{
+      const per = g[0].size
+      const reclaim = g.reduce((a,b)=>a+b.size,0) - per
+      return (
+        <tr key={i}>
+          <td>
+            <div style={{fontWeight:650,fontSize:12}}>{g[0].path.split('\\').pop()} ×{g.length}</div>
+            <div className="mono" style={{fontSize:11,color:'var(--muted)',maxWidth:360,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{g.map(f=>f.path).join(' • ')}</div>
+          </td>
+          <td className="mono">{g.length}</td>
+          <td className="mono">{formatBytes(per)}</td>
+          <td className="mono" style={{color:'var(--teal)',fontWeight:700}}>{formatBytes(reclaim)}</td>
+        </tr>
+      )
+    })
+  }, [dupes?.groups])
+
+  // ⚡ Bolt: memoize largest files list to prevent re-mapping on every tick
+  const largestList = useMemo(() => {
+    if (!largest) return null
+    return largest.map(f=>(
+      <tr key={f.path}>
+        <td><div className="mono" style={{fontSize:11,maxWidth:320,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={f.path}>{f.path}</div></td>
+        <td className="mono" style={{fontWeight:700}}>{formatBytes(f.size)}</td>
+      </tr>
+    ))
+  }, [largest])
+
   return (
     <div>
       <div className="topbar">
@@ -25,21 +58,7 @@ export default function Duplicates({ files, dupes, largest, scanning, progress, 
               <table className="table">
                 <thead><tr><th>Group</th><th>Files</th><th>Size each</th><th>Reclaimable</th></tr></thead>
                 <tbody>
-                  {dupes.groups.map((g,i)=>{
-                    const per = g[0].size
-                    const reclaim = g.reduce((a,b)=>a+b.size,0) - per
-                    return (
-                      <tr key={i}>
-                        <td>
-                          <div style={{fontWeight:650,fontSize:12}}>{g[0].path.split('\\').pop()} ×{g.length}</div>
-                          <div className="mono" style={{fontSize:11,color:'var(--muted)',maxWidth:360,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{g.map(f=>f.path).join(' • ')}</div>
-                        </td>
-                        <td className="mono">{g.length}</td>
-                        <td className="mono">{formatBytes(per)}</td>
-                        <td className="mono" style={{color:'var(--teal)',fontWeight:700}}>{formatBytes(reclaim)}</td>
-                      </tr>
-                    )
-                  })}
+                  {duplicatesList}
                 </tbody>
               </table>
             )}
@@ -53,12 +72,7 @@ export default function Duplicates({ files, dupes, largest, scanning, progress, 
             <table className="table">
               <thead><tr><th>File</th><th>Size</th></tr></thead>
               <tbody>
-                {largest.map(f=>(
-                  <tr key={f.path}>
-                    <td><div className="mono" style={{fontSize:11,maxWidth:320,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={f.path}>{f.path}</div></td>
-                    <td className="mono" style={{fontWeight:700}}>{formatBytes(f.size)}</td>
-                  </tr>
-                ))}
+                {largestList}
               </tbody>
             </table>
           </div>
