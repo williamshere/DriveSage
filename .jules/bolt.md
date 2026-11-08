@@ -13,3 +13,7 @@
 ## 2026-11-04 - Stabilizing Recharts Data Arrays
 **Learning:** During rapid scan ticks, providing inline array derivations to complex children like Recharts components (`<LineChart>`, `<AreaChart>`) triggers full re-renders and heavy layout thrashing, even if the actual chart data hasn't changed.
 **Action:** Always wrap data array transformations for Recharts components in `useMemo` hooks, providing them with referentially stable arrays. When moving inline logic to hooks, remember to place the hooks before any early returns and safely handle optional variables (e.g., `drive?.temperature`).
+
+## 2024-11-08 - Memoize reverse on history arrays
+**Learning:** During render, recreating array by using [...scans].reverse() or similar array manipulations causes unnecessary array re-allocation on every render.
+**Action:** Wrap array manipulation that requires creating new arrays inside `useMemo` hooks so they are only recalculated when dependencies change.
