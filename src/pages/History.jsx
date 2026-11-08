@@ -1,6 +1,14 @@
+import { useMemo } from 'react'
 import { formatBytes } from '../lib/drives.js'
 
 export default function History({ scans, cleanups, onExport }){
+  // ⚡ Bolt: memoize reversed history lists to avoid array recreation and reversal on every re-render
+  // 💡 What: Used useMemo on the reversed arrays.
+  // 🎯 Why: Re-creating and reversing arrays inline in the render function is expensive and breaks reference equality.
+  // 📊 Impact: Component renders are optimized and avoid unnecessary array allocations.
+  const reversedScans = useMemo(() => [...scans].reverse(), [scans])
+  const reversedCleanups = useMemo(() => [...cleanups].reverse(), [cleanups])
+
   const exportHtml=()=>{
     const html=`<!doctype html><meta charset="utf-8"><title>DriveSage Report — ${new Date().toLocaleString()}</title><style>body{font-family:system-ui;padding:32px;max-width:900px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f5f5f5}</style><h1>DriveSage — Storage Report</h1><p>Generated ${new Date().toLocaleString()}</p><h2>Scans (${scans.length})</h2><table><tr><th>When</th><th>Drive</th><th>Files</th><th>Bytes</th></tr>${scans.map(s=>`<tr><td>${new Date(s.ts).toLocaleString()}</td><td>${s.driveId||'all'}</td><td>${s.fileCount??'—'}</td><td>${s.bytes??'—'}</td></tr>`).join('')||`<tr><td colspan=4>No scans yet</td></tr>`}</table><h2>Cleanups (${cleanups.length})</h2><table><tr><th>When</th><th>Mode</th><th>Count</th><th>Bytes</th></tr>${cleanups.map(c=>`<tr><td>${new Date(c.ts).toLocaleString()}</td><td>${c.mode}</td><td>${c.count}</td><td>${c.bytes}</td></tr>`).join('')||`<tr><td colspan=4>No cleanups yet</td></tr>`}</table><p style="color:#666;margin-top:24px">Local report — no data left this machine.</p>`
     const blob=new Blob([html],{type:'text/html'})
@@ -25,7 +33,7 @@ export default function History({ scans, cleanups, onExport }){
               <table className="table">
                 <thead><tr><th>When</th><th>Files</th><th>Bytes</th></tr></thead>
                 <tbody>
-                  {[...scans].reverse().map((s,i)=>(
+                  {reversedScans.map((s,i)=>(
                     <tr key={i}><td className="mono" style={{fontSize:12}}>{new Date(s.ts).toLocaleString()}</td><td className="mono">{s.fileCount?.toLocaleString() ?? '—'}</td><td className="mono">{s.bytes!=null? formatBytes(s.bytes): '—'}</td></tr>
                   ))}
                 </tbody>
@@ -40,7 +48,7 @@ export default function History({ scans, cleanups, onExport }){
               <table className="table">
                 <thead><tr><th>When</th><th>Mode</th><th>Files</th><th>Bytes</th></tr></thead>
                 <tbody>
-                  {[...cleanups].reverse().map((c,i)=>(
+                  {reversedCleanups.map((c,i)=>(
                     <tr key={i}><td className="mono" style={{fontSize:12}}>{new Date(c.ts).toLocaleString()}</td><td><span className={`pill ${c.mode==='permanent'?'':''}`} style={c.mode==='permanent'?{color:'var(--red)'}:{}}>{c.mode}</span></td><td className="mono">{c.count}</td><td className="mono">{formatBytes(c.bytes)}</td></tr>
                   ))}
                 </tbody>
