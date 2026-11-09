@@ -17,3 +17,7 @@
 ## 2024-11-08 - Memoize reverse on history arrays
 **Learning:** During render, recreating array by using [...scans].reverse() or similar array manipulations causes unnecessary array re-allocation on every render.
 **Action:** Wrap array manipulation that requires creating new arrays inside `useMemo` hooks so they are only recalculated when dependencies change.
+
+## 2026-11-09 - Memoizing Object Props
+**Learning:** Passing inline objects (like `scanInfo={{scans: scanCount}}`) as props to React components defeats `React.memo()` because a new object reference is created on every render. During rapid state updates (like scan ticks), this causes unnecessary re-renders of static UI elements like sidebars.
+**Action:** Extract primitive values from inline objects and pass them directly as props (e.g., `scanCount={scanCount}`) when possible to maintain strict referential equality and preserve memoization caches.
