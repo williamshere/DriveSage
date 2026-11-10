@@ -21,3 +21,7 @@
 ## 2026-11-09 - Memoizing Object Props
 **Learning:** Passing inline objects (like `scanInfo={{scans: scanCount}}`) as props to React components defeats `React.memo()` because a new object reference is created on every render. During rapid state updates (like scan ticks), this causes unnecessary re-renders of static UI elements like sidebars.
 **Action:** Extract primitive values from inline objects and pass them directly as props (e.g., `scanCount={scanCount}`) when possible to maintain strict referential equality and preserve memoization caches.
+
+## 2026-11-10 - Protecting Heavy Components from Parent State Updates
+**Learning:** Even if data arrays passed to heavy components like Recharts are stable (memoized), if the parent component (e.g., the page component) is not memoized, it will re-render on unrelated state updates from higher up (like scan progress ticks). This causes the entire component tree to reconcile, leading to unnecessary CPU usage.
+**Action:** Wrap parent components containing heavy sub-components (like Recharts) in `React.memo()` to prevent them from re-rendering due to unrelated parent state updates.
