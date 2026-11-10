@@ -1,10 +1,14 @@
-import { useMemo } from 'react'
+import { useMemo, memo } from 'react'
 import { formatBytes, formatTemp } from '../lib/drives.js'
 import { computeHealth, bandColor } from '../lib/health.js'
 import { estimateDaysUntilFull, formatForecast } from '../lib/forecast.js'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, AreaChart, Area } from 'recharts'
 
-export default function DriveDetail({ drive, history, drives, selectedId, onSelect }){
+// ⚡ Bolt: Page-level memoization
+// 💡 What: Used memo() on DriveDetail component.
+// 🎯 Why: Prevents heavy Recharts sub-components from re-rendering every 260ms during a background scan.
+// 📊 Impact: Substantially reduces CPU usage when staying on Drive Detail page while a scan runs.
+export default memo(function DriveDetail({ drive, history, drives, selectedId, onSelect }){
   // ⚡ Bolt: Drive detail memoization
   // 💡 What: Used useMemo on drive health and forecast statistics before the early return.
   // 🎯 Why: Recharts elements inside this block are sensitive to rapid parent updates. Calculating stats safely prevents useless computations.
@@ -122,4 +126,4 @@ export default function DriveDetail({ drive, history, drives, selectedId, onSele
       </div>
     </div>
   )
-}
+})
