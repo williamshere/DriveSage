@@ -42,4 +42,4 @@ export default memo(function Sidebar({ page, setPage, theme, setTheme, settings,
       </div>
     </aside>
   )
-}
+})
