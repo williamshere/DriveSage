@@ -1,3 +1,6 @@
+## 2024-11-20 - Memoizing rapidly-updating UI components during background tasks
+**Learning:** During scans, the App state updates frequently (every 260ms). Without `React.memo` and `useMemo`, this causes the entire UI tree, including complex elements like `DriveCard` and extensive dataset processing loops, to re-render constantly and cause UI jank.
+**Action:** Use `React.memo` for components rendering complex SVGs (like `DriveCard`) and `useMemo` for derived datasets in frequently updating components.
 ## 2026-11-01 - Optimizing React Dashboard Reactivity
 **Learning:** During rapid state updates (like scan progress ticks every 260ms), having heavy operations directly in the render phase of the dashboard (e.g. array reductions, sortings, map reductions via computeHealth/checkAlerts) leads to substantial UI stutter and CPU overhead, especially if the components re-render inline arrow functions on every tick.
 **Action:** Use `React.memo` for list components and pass stable function references from the parent (calling specific element logic inside the child). Wrap heavy mapping/reducing lists in `useMemo` so they only recalculate when their specific dependencies (like `drives` or `histories`) change, not on unrelated parent state updates.
