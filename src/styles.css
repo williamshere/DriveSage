@@ -85,6 +85,8 @@ a{color:inherit}
 .drive-meta{font-size:11px;color:var(--muted);font-family:JetBrains Mono,monospace}
 .bar{height:8px;background:var(--panel-3);border-radius:999px;overflow:hidden;border:1px solid var(--border)}
 .bar > i{display:block;height:100%;background:linear-gradient(90deg,var(--teal),#4a8bdf);width:0;transition:width .4s}
+.bar.indeterminate > i{width:35%;animation:scan-progress 1.4s ease-in-out infinite}
+@keyframes scan-progress{from{transform:translateX(-110%)}to{transform:translateX(300%)}}
 .bar.warn > i{background:linear-gradient(90deg,var(--amber),#e05252)}
 .kv{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .kv div{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;padding:10px}

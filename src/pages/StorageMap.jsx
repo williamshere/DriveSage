@@ -3,7 +3,7 @@
 // 🎯 Why: Avoids iterating through map values (creating components and arrow function props) every 260ms during scans.
 // 📊 Impact: Substantially reduces CPU workload during drive scans where unrelated parent state components update (approx. 60% less re-renders on components here).
 // 🔬 Measurement: Run a scan and observe React Profiler. Stuttering should be improved.
-import React, { useMemo, useCallback } from 'react'
+import React, { useMemo, useCallback, useEffect } from 'react'
 import { formatBytes } from '../lib/drives.js'
 
 function Treemap({ node, onDrill, path }){
@@ -14,7 +14,7 @@ function Treemap({ node, onDrill, path }){
     const sorted=[...children].sort((a,b)=>b.size-a.size)
 
     return sorted.map(c=>{
-      const pct = Math.round(c.size / node.size * 100)
+      const pct = node.size ? Math.round(c.size / node.size * 100) : 0
       return (
         <div key={c.name} className="tm-block" onClick={()=> c.children && onDrill([...path, c.name], c)} style={{minHeight: c.children? 92: 72}}>
           <b>{c.name}</b>
@@ -37,30 +37,33 @@ function Treemap({ node, onDrill, path }){
   )
 }
 
-export default function StorageMap({ tree, scanning, progress, onScan, onStopScan }){
+export default function StorageMap({ tree, scanning, progress, onScan, onStopScan, hasScanned, scanError }){
   // drill state lives here
   const [stack, setStack] = React.useState([])
   const current = stack.length===0 ? tree : stack[stack.length-1].node
 
+  useEffect(()=>setStack([]), [tree])
   // Wrap pathNames in useMemo to retain object identity during re-renders, preventing Treemap block map un-caching
   const pathNames = useMemo(() => stack.map(s=>s.name), [stack])
-  const totalSize = tree.size
+  const totalSize = tree.size||0
 
   // ⚡ Bolt: Wrapped onDrill callback in useCallback.
   const handleDrill = useCallback((p, c) => setStack(s=>[...s,{name:c.name, node:c}]), [])
   return (
     <div>
       <div className="topbar">
-        <h1 className="h1">Storage map <small className="mono">{formatBytes(totalSize)} scanned • excludes system paths</small></h1>
+        <h1 className="h1">Storage map <small className="mono">{hasScanned ? `${formatBytes(totalSize)} • ${tree.file_count.toLocaleString()} files` : 'Not scanned yet'}</small></h1>
         <div className="top-actions">
-          {!scanning ? <button className="btn btn-primary" onClick={onScan}>Rescan</button> : <button className="btn" onClick={onStopScan}>Stop</button>}
+          {!scanning ? <button className="btn btn-primary" onClick={onScan}>{hasScanned?'Rescan files':'Scan files'}</button> : <button className="btn" onClick={onStopScan}>Stop</button>}
         </div>
       </div>
 
+      {scanError && <div className="card" role="alert" style={{padding:'10px 14px',marginBottom:12,color:'var(--amber)'}}>{scanError}</div>}
+
       {scanning && (
         <div className="card" style={{padding:14,marginBottom:14,display:'flex',gap:12,alignItems:'center'}}>
-          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>{progress.phase}</div><div className="bar" style={{marginTop:8}}><i style={{width:`${progress.pct}%`}}/></div></div>
-          <span className="mono" style={{fontSize:12}}>{progress.pct}%</span>
+          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>{progress.phase}</div><div className="bar indeterminate" style={{marginTop:8}}><i/></div></div>
+          <span className="mono" style={{fontSize:12}}>{(progress.filesScanned||0).toLocaleString()} files • {formatBytes(progress.bytesScanned||0)}</span>
         </div>
       )}
 
@@ -69,13 +72,15 @@ export default function StorageMap({ tree, scanning, progress, onScan, onStopSca
           <div style={{display:'flex',gap:8,alignItems:'center'}}>
             <button className="btn btn-ghost" onClick={()=>setStack([])} disabled={stack.length===0}>Root</button>
             {stack.length>0 && <button className="btn" onClick={()=>setStack(s=>s.slice(0,-1))}>Up</button>}
-            <span className="mono" style={{fontSize:12,color:'var(--muted)'}}>{['C:',...pathNames].join(' / ')}</span>
+            <span className="mono" style={{fontSize:12,color:'var(--muted)'}}>{[tree.name,...pathNames].join(' / ')}</span>
           </div>
-          <span className="card-sub mono">{formatBytes(current.size)} • largest first • click to drill</span>
+          <span className="card-sub mono">{formatBytes(current.size||0)} • largest first • click to drill</span>
         </div>
         <div className="card-body">
-          <Treemap node={current} onDrill={handleDrill} path={pathNames} />
-          <div style={{marginTop:12,fontSize:11,color:'var(--muted)',lineHeight:1.5}}>Treemap excludes <span className="mono">C:\Windows</span>, <span className="mono">Program Files</span> and hidden OS folders by default. Respects max depth and file-count cap. Click a block with children to drill in.</div>
+          {!hasScanned
+            ? <div className="mono" style={{fontSize:12,color:'var(--muted)'}}>Start a scan to map folders on your local drives.</div>
+            : <Treemap node={current} onDrill={handleDrill} path={pathNames} />}
+          <div style={{marginTop:12,fontSize:11,color:'var(--muted)',lineHeight:1.5}}>Scans are read-only and skip Windows/system folders, hidden entries, your Documents, Pictures, Desktop and Downloads, and configured exclusions. Depth and file-count limits are set in Settings.</div>
         </div>
       </div>
     </div>

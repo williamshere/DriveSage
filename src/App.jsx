@@ -1,5 +1,4 @@
-﻿import React, { useEffect, useMemo, useState, useCallback } from 'react'
-import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import DriveDetail from './pages/DriveDetail.jsx'
@@ -8,8 +7,7 @@ import Duplicates from './pages/Duplicates.jsx'
 import Cleanup from './pages/Cleanup.jsx'
 import History from './pages/History.jsx'
 import Settings from './pages/Settings.jsx'
-import { mockDrives, mockFiles, mockFolderTree, mockCleanupFiles, mockHistory, formatBytes } from './lib/drives.js'
-import { findDuplicateGroups, largestFiles } from './lib/duplicates.js'
+import { mockDrives, mockCleanupFiles, mockHistory, formatBytes } from './lib/drives.js'
 import { buildPreview } from './lib/cleanup.js'
 import { getDB, setDB, addScan, addCleanup } from './lib/db.js'
 import { getRealDrives } from './lib/tauri.js'
@@ -55,14 +53,20 @@ export default function App(){
   const [histories,setHistories]=useState(()=> mockHistory(mockDrives()))
   const [selectedId,setSelectedId]=useState(()=> mockDrives()[0].id)
   const selectedDrive = useMemo(()=> drives.find(d=>d.id===selectedId)||drives[0], [drives, selectedId])
-  const [tree,setTree]=useState(()=> mockFolderTree())
-  const [files]=useState(()=> mockFiles())
+  const [tree,setTree]=useState(()=>({name:'This PC',path:'',size:0,file_count:0,children:[]}))
+  const [dupes,setDupes]=useState({groups:[],reclaimable:0})
+  const [largest,setLargest]=useState([])
+  const [fileCount,setFileCount]=useState(0)
+  const [hasScanned,setHasScanned]=useState(false)
+  const [scanError,setScanError]=useState('')
   const [cleanupFiles]=useState(()=> mockCleanupFiles())
   const [enabledIds,setEnabledIds]=useState(()=> settings.enabledCategories || DEFAULT_SETTINGS.enabledCategories)
   const [deletionMode,setDeletionMode]=useState('recycle')
   const [preview,setPreview]=useState(null)
   const [scanning,setScanning]=useState(false)
   const [progress,setProgress]=useState({pct:0, phase:'idle'})
+  const scanInProgress=useRef(false)
+  const stopRequested=useRef(false)
   const [scanCount,setScanCount]=useState(()=>{
     try{ return (JSON.parse(localStorage.getItem('drivesage:db:v1')||'{}').scans||[]).length }catch{return 0}
   })
@@ -105,42 +109,92 @@ export default function App(){
     const db = getDB(); db.settings = {...settings, theme, enabledCategories: enabledIds}; setDB(db)
   }, [settings, theme, enabledIds])
 
-  const dupes = useMemo(()=> findDuplicateGroups(files), [files])
-  const largest = useMemo(()=> largestFiles(files, 20), [files])
-
   const handleSelectDrive = useCallback((id) => {
     setSelectedId(id)
     setPage('drive')
   }, [])
 
-  const runScan = (phase='Scanning disk…')=>{
-    if(scanning) return
-    setScanning(true); setProgress({pct:6, phase})
-    let pct=6
-    const phases=['Reading partitions','Walking folders','Hashing candidates','Finalizing']
-    let pi=0
-    const id=setInterval(()=>{
-      pct = Math.min(96, pct + Math.random()*14+4)
-      if(pct>30 && pi===0){ pi=1; setProgress({pct:Math.round(pct), phase:phases[1]})}
-      else if(pct>60 && pi===1){ pi=2; setProgress({pct:Math.round(pct), phase:phases[2]})}
-      else if(pct>85 && pi===2){ pi=3; setProgress({pct:Math.round(pct), phase:phases[3]})}
-      else setProgress(s=>({...s, pct:Math.round(pct)}))
-      if(pct>=96){
-        clearInterval(id)
-        setTimeout(()=>{
-          setScanning(false); setProgress({pct:100, phase:'Done'})
-          const entry={ ts:Date.now(), driveId:'all', fileCount: files.length, bytes: files.reduce((a,b)=>a+b.size,0)}
-          addScan(entry); setScans(getDB().scans); setScanCount(getDB().scans.length)
-          setTree(t=>({...t}))
-        }, 420)
+  const runScan=async()=>{
+    if(scanInProgress.current) return
+    if(!window.__TAURI__?.core?.invoke){
+      setScanError('File scanning is available in the DriveSage desktop app, not in a browser preview.')
+      return
+    }
+    scanInProgress.current=true
+    stopRequested.current=false
+    setScanError('')
+    setScanning(true)
+    setProgress({pct:0,phase:'Preparing local drives',filesScanned:0,bytesScanned:0})
+    const progressTimer=window.setInterval(async()=>{
+      try{
+        const current=await window.__TAURI__.core.invoke('scanner_progress')
+        setProgress({
+          pct:0,
+          phase:current.current_root ? `${current.phase} — ${current.current_root}` : current.phase,
+          filesScanned:current.files_scanned,
+          bytesScanned:current.bytes_scanned,
+        })
+      }catch(error){
+        setScanError(`Could not read scan progress: ${error instanceof Error ? error.message : String(error)}`)
       }
-    }, 260)
-    window.__driveSageInterval=id
+    },350)
+    try{
+      const result=await window.__TAURI__.core.invoke('scanner',{
+        maxDepth:settings.maxDepth,
+        fileCap:settings.fileCountCap,
+        excludedPaths:settings.excludedPaths||[],
+      })
+      setTree(result.tree)
+      setDupes({groups:result.duplicate_groups||[],reclaimable:result.reclaimable_bytes||0})
+      setLargest(result.largest_files||[])
+      setFileCount(result.file_count||0)
+      setHasScanned(true)
+      const entry={
+        ts:Date.now(),
+        driveId:'all',
+        fileCount:result.file_count||0,
+        bytes:result.total_bytes||0,
+        capped:!!result.capped,
+      }
+      addScan(entry); setScans(getDB().scans); setScanCount(getDB().scans.length)
+      setProgress({
+        pct:100,
+        phase:result.capped ? 'Scan limit reached' : 'Scan complete',
+        filesScanned:result.file_count||0,
+        bytesScanned:result.total_bytes||0,
+      })
+      const notices=[]
+      if(result.capped) notices.push(`Reached the ${(result.file_cap||settings.fileCountCap).toLocaleString()} file limit; results are partial. Increase the cap in Settings to scan more.`)
+      if(result.unreadable_paths>0) notices.push(`${result.unreadable_paths.toLocaleString()} file or folder entries could not be read; accessible files are included.`)
+      setScanError(notices.join(' '))
+    }catch(error){
+      if(stopRequested.current){
+        setProgress(current=>({...current,phase:'Scan stopped — previous results kept'}))
+      }else{
+        setScanError(error instanceof Error ? error.message : String(error))
+        setProgress(current=>({...current,phase:'Scan failed'}))
+      }
+    }finally{
+      window.clearInterval(progressTimer)
+      scanInProgress.current=false
+      stopRequested.current=false
+      setScanning(false)
+    }
   }
-  const stopScan=()=>{
-    clearInterval(window.__driveSageInterval)
-    setScanning(false); setProgress({pct:0, phase:'Stopped — disk untouched'})
-    setTimeout(()=> setProgress({pct:0, phase:'idle'}), 1600)
+  const stopScan=async()=>{
+    if(!scanInProgress.current) return
+    if(!window.__TAURI__?.core?.invoke){
+      setScanError('Could not stop the scan because the desktop scanner is unavailable.')
+      return
+    }
+    stopRequested.current=true
+    setProgress(current=>({...current,phase:'Stopping scan…'}))
+    try{
+      await window.__TAURI__.core.invoke('stop_scanner')
+    }catch(error){
+      stopRequested.current=false
+      setScanError(`Could not stop scan: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   const handlePreview=()=>{
@@ -182,10 +236,10 @@ export default function App(){
             <span style={{color:'var(--accent)', fontWeight:700}}>● Real drives connected</span> <span className="mono" style={{color:'var(--muted)', marginLeft:8}}>{drives.map(d=>`${d.letter} ${d.model} ${formatBytes(d.capacityBytes)} free ${formatBytes(d.freeBytes)}`).join(' • ')}</span>
           </div>
         )}
-        {page==='dashboard' && <Dashboard drives={drives} histories={histories} settings={settings} onSelectDrive={handleSelectDrive} onScan={()=>runScan('Scanning all drives…')} scanning={scanning} onStopScan={stopScan} progress={progress} />}
+        {page==='dashboard' && <Dashboard drives={drives} histories={histories} settings={settings} onSelectDrive={handleSelectDrive} onScan={runScan} scanning={scanning} onStopScan={stopScan} progress={progress} scanError={scanError} />}
         {page==='drive' && <DriveDetail drive={selectedDrive} history={histories.find(h=>h.driveId===selectedId)} drives={drives} selectedId={selectedId} onSelect={setSelectedId} />}
-        {page==='map' && <StorageMap tree={tree} scanning={scanning} progress={progress} onScan={()=>runScan('Building storage map…')} onStopScan={stopScan} />}
-        {page==='dupes' && <Duplicates files={files} dupes={dupes} largest={largest} scanning={scanning} progress={progress} onScan={()=>runScan('Finding duplicates…')} onStopScan={stopScan} />}
+        {page==='map' && <StorageMap tree={tree} scanning={scanning} progress={progress} onScan={runScan} onStopScan={stopScan} hasScanned={hasScanned} scanError={scanError} />}
+        {page==='dupes' && <Duplicates fileCount={fileCount} dupes={dupes} largest={largest} scanning={scanning} progress={progress} onScan={runScan} onStopScan={stopScan} hasScanned={hasScanned} scanError={scanError} />}
         {page==='cleanup' && <Cleanup cleanupFiles={cleanupFiles} enabledIds={enabledIds} setEnabledIds={setEnabledIds} deletionMode={deletionMode} setDeletionMode={setDeletionMode} onPreview={handlePreview} preview={preview} onExecute={handleExecute} executing={executing} log={cleanupLog} />}
         {page==='history' && <History scans={scans} cleanups={cleanupLog} onExport={handleExportJson} />}
         {page==='settings' && <Settings settings={{...settings, theme, enabledCategories: enabledIds}} setSettings={(updater)=>{

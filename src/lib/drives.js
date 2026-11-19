@@ -25,7 +25,7 @@ export function mockFolderTree(){
         {name:'AppData', size:85*1024*1024*1024},
         {name:'Documents', size:60*1024*1024*1024},
       ]},
-      { name:'Games', size:180*1024*1024*1024, children:[{name:'CallOfDuty',size:95*1024*1024*1024},{name:'SteamLibrary',size:85*1024*1024*1024}]},
+      { name:'Backups', size:180*1024*1024*1024, children:[{name:'System Images',size:95*1024*1024*1024},{name:'Archives',size:85*1024*1024*1024}]},
       { name:'Program Files', size:45*1024*1024*1024 },
       { name:'Temp', size:15*1024*1024*1024 },
     ]
@@ -44,7 +44,6 @@ export function mockFiles(){
     {path:'C:\\Users\\Projects\\builds\\installer.iso', size: 5.1*1024*1024*1024, mtime: 1710300000000},
     {path:'C:\\Users\\Projects\\archives\\backup_2023.zip', size: 6.4*1024*1024*1024, mtime: 1710400000000},
     {path:'C:\\Users\\Projects\\archives\\backup_2023 (1).zip', size: 6.4*1024*1024*1024, mtime: 1710401000000},
-    {path:'D:\\Games\\CallOfDuty\\data.pack', size: 42*1024*1024*1024, mtime: 1710500000000},
     {path:'C:\\Windows\\Temp\\tmp_0192.tmp', size: 1.2*1024*1024*1024, mtime: 1710600000000},
     {path:'C:\\Users\\AppData\\Local\\Temp\\cache_772.tmp', size: 890*1024*1024, mtime: 1710601000000},
     {path:'C:\\Users\\AppData\\Local\\Temp\\thumbcache.db', size: 540*1024*1024, mtime: 1710602000000},

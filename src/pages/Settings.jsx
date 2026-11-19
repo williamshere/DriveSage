@@ -35,8 +35,9 @@ export default function Settings({ settings, setSettings }){
               <label style={{fontSize:12}}>Snapshot retention (days)
                 <input className="input mono" type="number" value={settings.retentionDays} onChange={e=>upd('retentionDays', Number(e.target.value))} style={{marginTop:6}}/>
               </label>
-              <label style={{fontSize:12}}>Max scan depth <input className="input mono" type="number" value={settings.maxDepth} onChange={e=>upd('maxDepth', Number(e.target.value))} /></label>
-              <label style={{fontSize:12}}>File-count cap <input className="input mono" type="number" value={settings.fileCountCap} onChange={e=>upd('fileCountCap', Number(e.target.value))} /></label>
+              <label style={{fontSize:12}}>Max scan depth <input className="input mono" type="number" min="1" max="32" value={settings.maxDepth} onChange={e=>upd('maxDepth', Number(e.target.value))} /></label>
+              <label style={{fontSize:12}}>File-count cap <input className="input mono" type="number" min="1" max="2000000" value={settings.fileCountCap} onChange={e=>upd('fileCountCap', Number(e.target.value))} /></label>
+              <div style={{fontSize:11,color:'var(--muted)'}}>Scans local drives only. Windows/system and hidden entries, your Documents, Pictures, Desktop and Downloads, and excluded paths are skipped. Duplicate candidates are read-only hash checked.</div>
             </div>
           </div>
         </div>

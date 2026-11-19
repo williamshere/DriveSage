@@ -1,4 +1,4 @@
-﻿ // Tauri bridge — real drive data via 9 Rust commands, fallback to real-drives.json / demo
+// Tauri bridge for read-only drive data and native local-file scanning.
  export async function invokeTauri(cmd, args={}){
    if (typeof window !== 'undefined' && window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke) {
      try { return await window.__TAURI__.core.invoke(cmd, args) } catch(e){ console.warn(`tauri ${cmd} failed`, e); return null }
@@ -51,22 +51,13 @@
    return null
  }
 
- export async function scanStorage(path, maxDepth, fileCap){
-   let d = await invokeTauri('scanner', {path, maxDepth, fileCap})
-   if(d) return d
-   d = await invokeTauri('scan_storage', {path, maxDepth, fileCap})
-   if(d) return d
-   try { const r=await fetch(`/api/scanner?path=${encodeURIComponent(path)}`); if(r.ok) return await r.json()} catch {}
-   return null
+ export async function scanStorage(maxDepth, fileCap, excludedPaths=[]){
+   return invokeTauri('scanner', {maxDepth, fileCap, excludedPaths})
  }
 
- export async function findDuplicates(path){
-   let d = await invokeTauri('duplicates', {path})
-   if(d) return d
-   d = await invokeTauri('find_duplicates', {path})
-   if(d) return d
-   try { const r=await fetch(`/api/duplicates?path=${encodeURIComponent(path)}`); if(r.ok) return await r.json()} catch {}
-   return null
+ export async function findDuplicates(maxDepth, fileCap, excludedPaths=[]){
+   const result = await scanStorage(maxDepth, fileCap, excludedPaths)
+   return result ? {groups:result.duplicate_groups, reclaimable:result.reclaimable_bytes} : null
  }
 
  export async function previewCleanup(categories){
