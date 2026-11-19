@@ -1,4 +1,4 @@
-﻿import { formatBytes } from '../lib/drives.js'
+import { formatBytes } from '../lib/drives.js'
 import { computeHealth, bandColor } from '../lib/health.js'
 import { checkAlerts } from '../lib/alerts.js'
 import { exportDrivesCsv, copyDriveInfo } from '../lib/export.js'
@@ -89,11 +89,10 @@ const DriveCard = memo(function DriveCard({drive, history, onSelect}){
 
 export default function Dashboard({ drives, histories, settings, onSelectDrive, onScan, scanning, onStopScan, progress }){
   const alerts = useMemo(() => {
-    const res = []
-    const now = Date.now()
-    for (const d of drives) {
-      const hs = checkAlerts(d, { tempWarning: settings.tempWarning, tempCritical: settings.tempCritical, wearWarning: settings.wearWarning, freeSpaceWarningPct: settings.freeSpaceWarning }, now)
-      for (const a of hs) res.push({ ...a, driveId: d.id })
+    const arr = []
+    for(const d of drives){
+      const hs = checkAlerts(d, { tempWarning: settings.tempWarning, tempCritical: settings.tempCritical, wearWarning: settings.wearWarning, freeSpaceWarningPct: settings.freeSpaceWarning }, Date.now())
+      for(const a of hs) arr.push({...a, driveId:d.id})
     }
     return res
     const arr = []
@@ -106,16 +105,17 @@ export default function Dashboard({ drives, histories, settings, onSelectDrive, 
 
   const totalBytes = useMemo(() => drives.reduce((a,b)=>a+(b.capacityBytes||0),0), [drives])
   const freeBytes = useMemo(() => drives.reduce((a,b)=>a+(b.freeBytes||0),0), [drives])
+  const systemSummary = useMemo(() => summarizeSystemStatus(drives, histories, settings), [drives, histories, settings])
 
   const historyMap = useMemo(() => {
     const map = new Map()
-    for (const h of histories) map.set(h.driveId, h)
+    for (const h of histories) {
+      if (!map.has(h.driveId)) map.set(h.driveId, h)
+    }
     return map
   }, [histories])
 
-  const driveCards = useMemo(() => drives.map(d=> <DriveCard key={d.id} drive={d} history={historyMap.get(d.id)} onClick={()=>onSelectDrive(d.id)} />), [drives, historyMap, onSelectDrive])
-
-  const healthOverview = useMemo(() => drives.map(d=>{
+  const healthOverviewList = useMemo(() => drives.map(d=>{
     const hs=computeHealth({wearPercent:d.wearPercent??0, maxTemp:d.temperature??0, tempHistory:historyMap.get(d.id)?.temps||[], reallocated:d.reallocated??0, pending:d.pending??0, crcErrors:d.crcErrors??0})
   const systemSummary = useMemo(() => summarizeSystemStatus(drives, histories, settings), [drives, histories, settings])
 
@@ -138,6 +138,8 @@ export default function Dashboard({ drives, histories, settings, onSelectDrive, 
     </div>
   }), [drives])
 
+  // Reuse the history index and drive cards during scan progress updates.
+  const driveCardsList = useMemo(() => drives.map(d=> <DriveCard key={d.id} drive={d} history={historyMap.get(d.id)} onSelect={onSelectDrive} />), [drives, historyMap, onSelectDrive])
   // ⚡ Bolt: Memoize the mapping to DriveCards to prevent O(N^2) histories.find calls
   // on every render (especially during rapid progress ticks from scanning)
   const driveCardsList = useMemo(() => drives.map(d=> <DriveCard key={d.id} drive={d} history={histories.find(h=>h.driveId===d.id)} onSelect={onSelectDrive} />), [drives, histories, onSelectDrive])
