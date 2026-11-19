@@ -18,3 +18,13 @@ Thumbs.db
 npm-debug.log*
 
 src-tauri/gen/
+
+desktop.ini
+*.exe
+*.lnk
+
+
+# Temporary drive files
+.tmp.*
+*.tmp
+

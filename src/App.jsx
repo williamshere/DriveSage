@@ -1,4 +1,5 @@
 ﻿import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import DriveDetail from './pages/DriveDetail.jsx'
@@ -168,7 +169,7 @@ export default function App(){
 
   return (
     <div className="shell">
-      <Sidebar page={page} setPage={setPage} theme={theme} setTheme={setTheme} settings={settings} scanInfo={{scans: scanCount}} />
+      <Sidebar page={page} setPage={setPage} theme={theme} setTheme={setTheme} settings={settings} scanCount={scanCount} />
       <main className="main">
         {drivesSource!=='real' && (
           <div className="card" style={{padding:'10px 14px', marginBottom:12, background:'var(--panel-2)', border:'1px dashed var(--border)', fontSize:12, color:'var(--muted)'}}>
