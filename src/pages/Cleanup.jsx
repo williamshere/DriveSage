@@ -1,8 +1,8 @@
 import { useMemo, useCallback } from 'react'
 import { formatBytes } from '../lib/drives.js'
-import { CLEANUP_CATEGORIES, buildPreview } from '../lib/cleanup.js'
+import { CLEANUP_CATEGORIES } from '../lib/cleanup.js'
 
-export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, deletionMode, setDeletionMode, onPreview, preview, onExecute, executing, log }){
+export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDeletionMode, onPreview, preview, previewing, previewError, log }){
   const toggle = useCallback((id)=>{
     setEnabledIds(ids=> ids.includes(id)? ids.filter(x=>x!==id) : [...ids, id])
   }, [setEnabledIds])
@@ -10,8 +10,7 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, delet
   // ⚡ Bolt: memoize category list rendering to avoid recalculating file counts and sizes on every render
   const categoriesList = useMemo(() => {
     return CLEANUP_CATEGORIES.map(cat=>{
-      const files=cleanupFiles[cat.id]||[]
-      const bytes=files.reduce((a,b)=>a+b.size,0)
+      const item=preview?.items.find(it=>it.category.id===cat.id)
       const on=enabledIds.includes(cat.id)
       return (
         <label key={cat.id} style={{display:'flex',gap:10,alignItems:'flex-start',padding:'10px',borderRadius:10,border:`1px solid ${on?'#2a6b5a':'var(--border)'}`,background: on? 'var(--teal-dim)':'var(--panel-2)',cursor:'pointer'}}>
@@ -19,16 +18,16 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, delet
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontWeight:700,fontSize:13}}>{cat.label}</div>
             <div style={{fontSize:11,color:'var(--muted)'}}>{cat.desc}</div>
-            <div className="mono" style={{fontSize:11,color:'var(--muted)',marginTop:4}}>{files.length} files • {formatBytes(bytes)}</div>
+            <div className="mono" style={{fontSize:11,color:'var(--muted)',marginTop:4}}>{item ? `${item.count.toLocaleString()} files • ${formatBytes(item.bytes)}` : 'not measured yet'}</div>
           </div>
         </label>
       )
     })
-  }, [cleanupFiles, enabledIds, toggle])
+  }, [preview, enabledIds, toggle])
   return (
     <div>
       <div className="topbar">
-        <h1 className="h1">Cleanup <small style={{color:'var(--amber)',fontWeight:700}}>Preview first — nothing deleted until you confirm</small></h1>
+        <h1 className="h1">Cleanup <small style={{color:'var(--amber)',fontWeight:700}}>Preview only — this build never deletes files</small></h1>
         <div className="top-actions">
           <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,color:'var(--muted)'}}>
             <select className="select" value={deletionMode} onChange={e=>setDeletionMode(e.target.value)} style={{width:160}}>
@@ -42,7 +41,7 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, delet
       <div className="alert-banner">
         <span>⚠</span>
         <div style={{fontSize:12,lineHeight:1.5}}>
-          <b>Safety rules:</b> Only allow-listed categories are cleanable. Protected paths (<span className="mono">C:\Windows, Program Files, Documents/Pictures/Desktop/Downloads</span>) are never touched unless you explicitly add them in Settings. Every deletion is logged with file list and timestamp.
+          <b>Safety rules:</b> Only allow-listed categories are cleanable. Protected paths (<span className="mono">C:\Windows, Program Files, Documents/Pictures/Desktop/Downloads</span>) are never touched unless you explicitly add them in Settings. Counts include only files Windows lets this app read (Windows Temp and Delivery Optimization may be partly hidden without administrator rights).
         </div>
       </div>
 
@@ -51,7 +50,7 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, delet
           <div className="card-head"><div className="card-title">Categories</div><span className="card-sub">allow-list only</span></div>
           <div className="card-body" style={{display:'flex',flexDirection:'column',gap:10}}>
             {categoriesList}
-            <button className="btn btn-primary" onClick={onPreview} disabled={executing || enabledIds.length===0}>Build preview</button>
+            <button className="btn btn-primary" onClick={onPreview} disabled={previewing || enabledIds.length===0}>{previewing ? 'Measuring…' : 'Build preview'}</button>
             {deletionMode==='permanent' && <div style={{fontSize:11,color:'var(--red)',fontWeight:700}}>Permanent delete will bypass Recycle Bin for this run.</div>}
           </div>
         </div>
@@ -59,7 +58,7 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, delet
         <div className="card">
           <div className="card-head"><div className="card-title">Preview</div><span className="card-sub mono">{preview? `${preview.totalCount} files • ${formatBytes(preview.totalBytes)}` : 'no preview yet'}</span></div>
           <div className="card-body" style={{padding:0}}>
-            {!preview? <div style={{padding:24,color:'var(--muted)',fontSize:13}}>Select categories and build a preview. Exact file count and bytes are shown before any delete. <br/>Execution requires confirmation.</div> : (
+            {!preview? <div style={{padding:24,color:'var(--muted)',fontSize:13}}>{previewError || 'Select categories and build a preview to measure the real file count and bytes in each category.'}</div> : (
               <>
                 <table className="table">
                   <thead><tr><th>Category</th><th>Count</th><th>Bytes</th></tr></thead>
@@ -69,10 +68,7 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, delet
                     ))}
                   </tbody>
                 </table>
-                <div style={{padding:14,display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
-                  <button className="btn" style={{background:'var(--red)',color:'#fff',borderColor:'#7a1f1f'}} onClick={onExecute} disabled={executing || preview.totalCount===0}>{executing? 'Executing…' : `Confirm & delete ${preview.totalCount} files (${formatBytes(preview.totalBytes)})`}</button>
-                  <span style={{fontSize:11,color:'var(--muted)'}}>Goes to {deletionMode==='recycle'?'Recycle Bin':'permanent delete'}. Stop button aborts mid-run leaving disk untouched.</span>
-                </div>
+                <div style={{padding:14,fontSize:12,color:'var(--muted)'}}>Deleting files from this screen is not available yet, so nothing was removed. Use Windows Disk Cleanup or Storage Sense to reclaim this space.</div>
               </>
             )}
           </div>
