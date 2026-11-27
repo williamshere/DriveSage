@@ -201,24 +201,43 @@ impl ScanContext {
 // 1. drives — Detect every fixed/removable volume and map it to its physical disk (read-only)
 const DRIVE_SCRIPT: &str = r#"
 $ErrorActionPreference='SilentlyContinue'
-$disks=@{}
-try {
-  Get-PhysicalDisk | ForEach-Object {
-    $c=$null
-    try { $c = $_ | Get-StorageReliabilityCounter } catch {}
-    $disks[[string]$_.DeviceId] = [pscustomobject]@{
-      model=$_.FriendlyName; serial=$_.SerialNumber; media=[string]$_.MediaType;
-      bus=[string]$_.BusType; health=[string]$_.HealthStatus;
-      temp=$c.Temperature; wear=$c.Wear; hours=$c.PowerOnHours
+function Get-BackingPhysicalDisk($letter) {
+  try {
+    $partitions = @(Get-Partition -DriveLetter $letter -ErrorAction Stop)
+    if ($partitions.Count -ne 1) { return }
+    $osDisks = @(Get-Disk -Partition $partitions[0] -ErrorAction Stop)
+    if ($osDisks.Count -ne 1) { return }
+    $osDisk = $osDisks[0]
+    $virtualDisks = @(Get-CimAssociatedInstance -Namespace 'root/Microsoft/Windows/Storage' -InputObject $osDisk -ResultClassName MSFT_VirtualDisk -ErrorAction Stop)
+    if ($virtualDisks.Count -gt 1) { return }
+    if ($virtualDisks.Count -eq 1) {
+      $physicalDisks = @(Get-PhysicalDisk -VirtualDisk $virtualDisks[0] -ErrorAction Stop)
+    } else {
+      $physicalDisks = @(Get-CimAssociatedInstance -Namespace 'root/Microsoft/Windows/Storage' -InputObject $osDisk -ResultClassName MSFT_PhysicalDisk -ErrorAction Stop)
+      if ($physicalDisks.Count -eq 0) {
+        $counters = @(Get-CimAssociatedInstance -Namespace 'root/Microsoft/Windows/Storage' -InputObject $osDisk -ResultClassName MSFT_StorageReliabilityCounter -ErrorAction Stop)
+        if ($counters.Count -ne 1) { return }
+        $physicalDisks = @(Get-CimAssociatedInstance -Namespace 'root/Microsoft/Windows/Storage' -InputObject $counters[0] -ResultClassName MSFT_PhysicalDisk -ErrorAction Stop)
+      }
     }
-  }
-} catch {}
+    if ($physicalDisks.Count -eq 1) { return $physicalDisks[0] }
+  } catch {}
+}
 $rows=@()
 foreach ($d in [System.IO.DriveInfo]::GetDrives()) {
   if (($d.DriveType -ne 'Fixed' -and $d.DriveType -ne 'Removable') -or -not $d.IsReady) { continue }
   $letter = $d.Name.Substring(0,1)
   $disk = $null
-  try { $p = Get-Partition -DriveLetter $letter; if ($p) { $disk = $disks[[string]$p.DiskNumber] } } catch {}
+  $physical = Get-BackingPhysicalDisk $letter
+  if ($physical) {
+    $c=$null
+    try { $c = $physical | Get-StorageReliabilityCounter -ErrorAction Stop } catch {}
+    $disk = [pscustomobject]@{
+      model=$physical.FriendlyName; serial=$physical.SerialNumber; media=[string]$physical.MediaType;
+      bus=[string]$physical.BusType; health=[string]$physical.HealthStatus;
+      temp=$c.Temperature; wear=$c.Wear; hours=$c.PowerOnHours
+    }
+  }
   $rows += [pscustomobject]@{ letter=$letter; total=$d.TotalSize; free=$d.AvailableFreeSpace; removable=($d.DriveType -eq 'Removable'); disk=$disk }
 }
 ConvertTo-Json -InputObject @($rows) -Depth 4 -Compress
