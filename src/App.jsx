@@ -7,9 +7,9 @@ import Duplicates from './pages/Duplicates.jsx'
 import Cleanup from './pages/Cleanup.jsx'
 import History from './pages/History.jsx'
 import Settings from './pages/Settings.jsx'
-import { mockDrives, mockCleanupFiles, mockHistory, formatBytes } from './lib/drives.js'
+import { mockDrives, mockCleanupFiles, mockHistory } from './lib/drives.js'
 import { buildPreview } from './lib/cleanup.js'
-import { getDB, setDB, addScan, addCleanup } from './lib/db.js'
+import { getDB, setDB, addScan } from './lib/db.js'
 import { getRealDrives } from './lib/tauri.js'
 
 const DEFAULT_SETTINGS={
@@ -61,7 +61,6 @@ export default function App(){
   const [scanError,setScanError]=useState('')
   const [cleanupFiles]=useState(()=> mockCleanupFiles())
   const [enabledIds,setEnabledIds]=useState(()=> settings.enabledCategories || DEFAULT_SETTINGS.enabledCategories)
-  const [deletionMode,setDeletionMode]=useState('recycle')
   const [preview,setPreview]=useState(null)
   const [scanning,setScanning]=useState(false)
   const [progress,setProgress]=useState({pct:0, phase:'idle'})
@@ -70,7 +69,6 @@ export default function App(){
   const [scanCount,setScanCount]=useState(()=>{
     try{ return (JSON.parse(localStorage.getItem('drivesage:db:v1')||'{}').scans||[]).length }catch{return 0}
   })
-  const [executing,setExecuting]=useState(false)
   const [cleanupLog,setCleanupLog]=useState(()=>{
     try{ return JSON.parse(localStorage.getItem('drivesage:db:v1')||'{}').cleanup_actions||[] }catch{return []}
   })
@@ -87,7 +85,7 @@ export default function App(){
         const norm = real.map(normalizeDrive).filter(d=> d.capacityBytes && d.capacityBytes>0)
         if(norm.length){
           setDrives(norm)
-          setHistories(mockHistory(norm))
+          setHistories([])
           setSelectedId(norm[0].id)
           setDrivesSource('real')
           // Also store snapshot for health/forecast
@@ -201,21 +199,6 @@ export default function App(){
     const p=buildPreview(cleanupFiles, enabledIds)
     setPreview(p)
   }
-  const handleExecute=()=>{
-    if(!preview || preview.totalCount===0) return
-    setExecuting(true)
-    let pct=0
-    const intv=setInterval(()=>{
-      pct+= Math.random()*22+8
-      if(pct>=100){
-        clearInterval(intv)
-        const entry={ ts:Date.now(), mode: deletionMode, count: preview.totalCount, bytes: preview.totalBytes, files: preview.items.flatMap(it=>it.files).slice(0,20) }
-        addCleanup(entry); setCleanupLog(getDB().cleanup_actions)
-        setExecuting(false); setPreview(null)
-      }
-    }, 220)
-  }
-
   const handleExportJson=()=>{
     const blob=new Blob([JSON.stringify(getDB(), null, 2)], {type:'application/json'})
     const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`drivesage-export-${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url)
@@ -240,7 +223,7 @@ export default function App(){
         {page==='drive' && <DriveDetail drive={selectedDrive} history={histories.find(h=>h.driveId===selectedId)} drives={drives} selectedId={selectedId} onSelect={setSelectedId} />}
         {page==='map' && <StorageMap tree={tree} scanning={scanning} progress={progress} onScan={runScan} onStopScan={stopScan} hasScanned={hasScanned} scanError={scanError} />}
         {page==='dupes' && <Duplicates fileCount={fileCount} dupes={dupes} largest={largest} scanning={scanning} progress={progress} onScan={runScan} onStopScan={stopScan} hasScanned={hasScanned} scanError={scanError} />}
-        {page==='cleanup' && <Cleanup cleanupFiles={cleanupFiles} enabledIds={enabledIds} setEnabledIds={setEnabledIds} deletionMode={deletionMode} setDeletionMode={setDeletionMode} onPreview={handlePreview} preview={preview} onExecute={handleExecute} executing={executing} log={cleanupLog} />}
+        {page==='cleanup' && <Cleanup cleanupFiles={cleanupFiles} enabledIds={enabledIds} setEnabledIds={setEnabledIds} onPreview={handlePreview} preview={preview} log={cleanupLog} />}
         {page==='history' && <History scans={scans} cleanups={cleanupLog} onExport={handleExportJson} />}
         {page==='settings' && <Settings settings={{...settings, theme, enabledCategories: enabledIds}} setSettings={(updater)=>{
           const next = typeof updater==='function' ? updater({...settings, theme, enabledCategories: enabledIds}) : updater

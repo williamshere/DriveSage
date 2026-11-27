@@ -2,7 +2,7 @@ import { useMemo, useCallback } from 'react'
 import { formatBytes } from '../lib/drives.js'
 import { CLEANUP_CATEGORIES, buildPreview } from '../lib/cleanup.js'
 
-export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, deletionMode, setDeletionMode, onPreview, preview, onExecute, executing, log }){
+export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, onPreview, preview, log }){
   const toggle = useCallback((id)=>{
     setEnabledIds(ids=> ids.includes(id)? ids.filter(x=>x!==id) : [...ids, id])
   }, [setEnabledIds])
@@ -28,21 +28,13 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, delet
   return (
     <div>
       <div className="topbar">
-        <h1 className="h1">Cleanup <small style={{color:'var(--amber)',fontWeight:700}}>Preview first — nothing deleted until you confirm</small></h1>
-        <div className="top-actions">
-          <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,color:'var(--muted)'}}>
-            <select className="select" value={deletionMode} onChange={e=>setDeletionMode(e.target.value)} style={{width:160}}>
-              <option value="recycle">Recycle Bin (default)</option>
-              <option value="permanent">Permanent delete</option>
-            </select>
-          </label>
-        </div>
+        <h1 className="h1">Cleanup <small style={{color:'var(--amber)',fontWeight:700}}>Sample preview only</small></h1>
       </div>
 
       <div className="alert-banner">
-        <span>⚠</span>
+        <span>ℹ</span>
         <div style={{fontSize:12,lineHeight:1.5}}>
-          <b>Safety rules:</b> Only allow-listed categories are cleanable. Protected paths (<span className="mono">C:\Windows, Program Files, Documents/Pictures/Desktop/Downloads</span>) are never touched unless you explicitly add them in Settings. Every deletion is logged with file list and timestamp.
+        <b>Preview only:</b> The listed files and sizes are sample data. DriveSage does not inspect or delete any files from this screen.
         </div>
       </div>
 
@@ -51,15 +43,14 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, delet
           <div className="card-head"><div className="card-title">Categories</div><span className="card-sub">allow-list only</span></div>
           <div className="card-body" style={{display:'flex',flexDirection:'column',gap:10}}>
             {categoriesList}
-            <button className="btn btn-primary" onClick={onPreview} disabled={executing || enabledIds.length===0}>Build preview</button>
-            {deletionMode==='permanent' && <div style={{fontSize:11,color:'var(--red)',fontWeight:700}}>Permanent delete will bypass Recycle Bin for this run.</div>}
+            <button className="btn btn-primary" onClick={onPreview} disabled={enabledIds.length===0}>Build sample preview</button>
           </div>
         </div>
 
         <div className="card">
-          <div className="card-head"><div className="card-title">Preview</div><span className="card-sub mono">{preview? `${preview.totalCount} files • ${formatBytes(preview.totalBytes)}` : 'no preview yet'}</span></div>
+          <div className="card-head"><div className="card-title">Sample preview</div><span className="card-sub mono">{preview? `${preview.totalCount} files • ${formatBytes(preview.totalBytes)}` : 'no preview yet'}</span></div>
           <div className="card-body" style={{padding:0}}>
-            {!preview? <div style={{padding:24,color:'var(--muted)',fontSize:13}}>Select categories and build a preview. Exact file count and bytes are shown before any delete. <br/>Execution requires confirmation.</div> : (
+            {!preview? <div style={{padding:24,color:'var(--muted)',fontSize:13}}>Select categories to build a sample preview. No files are inspected or deleted.</div> : (
               <>
                 <table className="table">
                   <thead><tr><th>Category</th><th>Count</th><th>Bytes</th></tr></thead>
@@ -69,15 +60,12 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, delet
                     ))}
                   </tbody>
                 </table>
-                <div style={{padding:14,display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
-                  <button className="btn" style={{background:'var(--red)',color:'#fff',borderColor:'#7a1f1f'}} onClick={onExecute} disabled={executing || preview.totalCount===0}>{executing? 'Executing…' : `Confirm & delete ${preview.totalCount} files (${formatBytes(preview.totalBytes)})`}</button>
-                  <span style={{fontSize:11,color:'var(--muted)'}}>Goes to {deletionMode==='recycle'?'Recycle Bin':'permanent delete'}. Stop button aborts mid-run leaving disk untouched.</span>
-                </div>
+                <div style={{padding:14,fontSize:12,color:'var(--muted)'}}>Deletion is not available in this preview.</div>
               </>
             )}
           </div>
           <div style={{padding:'12px 14px', borderTop:'1px solid var(--border)'}}>
-            <div style={{fontWeight:750,fontSize:12,marginBottom:8}}>Recent actions</div>
+            <div style={{fontWeight:750,fontSize:12,marginBottom:8}}>Previously recorded entries (not verified)</div>
             {log.length===0? <div style={{fontSize:12,color:'var(--muted)'}}>No cleanups yet.</div> : log.slice(-5).reverse().map((e,i)=>(
               <div key={i} className="mono" style={{fontSize:11,padding:'6px 0',borderBottom:'1px solid var(--border)',color:'var(--muted)'}}>
                 {new Date(e.ts).toLocaleString()} — {e.mode} — {e.count} files • {formatBytes(e.bytes)} {e.files?.slice(0,1).map(f=>`— ${f.path}`).join('')}
