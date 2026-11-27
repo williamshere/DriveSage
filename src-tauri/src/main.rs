@@ -31,8 +31,9 @@ fn powershell_exe() -> PathBuf {
 }
 
 fn run_powershell(script: &str) -> Result<String, String> {
+    // Emit UTF-8 bytes straight to stdout so output never depends on the console code page.
     let script = format!(
-        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; {}",
+        "$__out = (& {{ {} }} | Out-String); $__bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($__out); $__stdout = [Console]::OpenStandardOutput(); $__stdout.Write($__bytes, 0, $__bytes.Length); $__stdout.Flush()",
         script
     );
     let mut command = Command::new(powershell_exe());
@@ -243,12 +244,12 @@ foreach ($d in [System.IO.DriveInfo]::GetDrives()) {
 ConvertTo-Json -InputObject @($rows) -Depth 4 -Compress
 "#;
 
-fn classify_drive_type(media: &str, bus: &str, removable: bool) -> String {
+fn classify_drive_type(media: &str, bus: &str) -> String {
     let media = media.to_lowercase();
     let bus = bus.to_lowercase();
     if bus == "nvme" {
         "NVMe".to_string()
-    } else if bus == "usb" || (removable && media.is_empty()) {
+    } else if bus == "usb" {
         "USB".to_string()
     } else if media == "ssd" {
         "SSD".to_string()
@@ -279,7 +280,6 @@ fn parse_drive_rows(json: &str) -> Result<Vec<DriveInfo>, String> {
         let Some(letter) = non_empty(row.get("letter")).map(|l| l.to_uppercase()) else {
             continue;
         };
-        let removable = row.get("removable").and_then(|v| v.as_bool()).unwrap_or(false);
         let disk = row.get("disk").filter(|d| d.is_object());
         let field = |name: &str| disk.and_then(|d| d.get(name));
         let media = non_empty(field("media")).unwrap_or_default();
@@ -305,7 +305,7 @@ fn parse_drive_rows(json: &str) -> Result<Vec<DriveInfo>, String> {
             pending: None,
             crc_errors: None,
             power_on_hours: field("hours").and_then(|v| v.as_u64()).map(|h| h as u32),
-            drive_type: classify_drive_type(&media, bus.as_deref().unwrap_or(""), removable),
+            drive_type: classify_drive_type(&media, bus.as_deref().unwrap_or("")),
             health_status: non_empty(field("health")),
             bus_type: bus,
         });
@@ -830,7 +830,7 @@ fn cleanup(categories: Option<Vec<String>>) -> Result<serde_json::Value, String>
                 r#"Get-ChildItem -Path $env:TEMP -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
             }
             "recycleBin" => {
-                r#"[System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | ForEach-Object { Get-ChildItem -LiteralPath ($_.Name + '$Recycle.Bin') -Recurse -Force -File -ErrorAction SilentlyContinue } | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
+                r#"$errs=@(); $files=@(); foreach ($d in [System.IO.DriveInfo]::GetDrives()) { if ($d.DriveType -ne 'Fixed' -or -not $d.IsReady) { continue }; $bin = $d.Name + '$Recycle.Bin'; if (-not (Test-Path -LiteralPath $bin)) { continue }; $e=$null; $files += @(Get-ChildItem -LiteralPath $bin -Recurse -Force -File -ErrorAction SilentlyContinue -ErrorVariable e); if ($e) { $errs += $e } }; if ($errs.Count -gt 0) { 'null' } else { $files | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress }"#
             }
             "thumbCache" => {
                 r#"Get-ChildItem -Path "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache*.db" -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
@@ -1002,10 +1002,11 @@ mod drive_tests {
         let json = r#"[
             {"letter":"c","total":1000,"free":400,"removable":false,"disk":{"model":"Samsung 980","serial":" S6C2 ","media":"SSD","bus":"NVMe","health":"Healthy","temp":41,"wear":7,"hours":812}},
             {"letter":"D","total":4000,"free":10,"removable":false,"disk":{"model":"WD Blue","serial":"","media":"HDD","bus":"SATA","health":"Healthy","temp":0,"wear":null,"hours":null}},
-            {"letter":"E","total":8,"free":4,"removable":true,"disk":null}
+            {"letter":"E","total":8,"free":4,"removable":true,"disk":null},
+            {"letter":"F","total":8,"free":4,"removable":true,"disk":{"model":"Stick","serial":"x","media":"Unspecified","bus":"USB","health":"Healthy"}}
         ]"#;
         let drives = parse_drive_rows(json).unwrap();
-        assert_eq!(drives.len(), 3);
+        assert_eq!(drives.len(), 4);
         assert_eq!(drives[0].letter.as_deref(), Some("C:"));
         assert_eq!(drives[0].drive_type, "NVMe");
         assert_eq!(drives[0].serial, "S6C2");
@@ -1016,7 +1017,8 @@ mod drive_tests {
         assert_eq!(drives[1].temperature, None);
         assert_eq!(drives[1].wear_percent, None);
         assert_eq!(drives[2].model, "Unknown model");
-        assert_eq!(drives[2].drive_type, "USB");
+        assert_eq!(drives[2].drive_type, "Unknown");
+        assert_eq!(drives[3].drive_type, "USB");
         assert_eq!(drives[2].capacity_bytes, Some(8));
     }
 

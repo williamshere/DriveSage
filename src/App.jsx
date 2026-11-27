@@ -33,7 +33,7 @@ function normalizeDrive(raw){
     reallocated: raw.reallocated ?? raw.ReadErrorsTotal ?? null,
     pending: raw.pending ?? null,
     crcErrors: raw.crcErrors ?? null,
-    powerOnHours: raw.powerOnHours ?? raw.PowerOnHours ?? null,
+    powerOnHours: raw.powerOnHours ?? raw.power_on_hours ?? raw.PowerOnHours ?? null,
     type: raw.type || raw.drive_type || raw.MediaType || 'Fixed',
     healthStatus: raw.healthStatus || raw.health_status || null,
     busType: raw.busType || raw.bus_type || null,
@@ -212,7 +212,7 @@ export default function App(){
         const m=result.preview?.[cat.id]
         return { category:cat, count:Number(m?.Count)||0, bytes:Number(m?.Sum)||0, measured:!!m }
       })
-      setPreview({ items, totalCount:items.reduce((a,i)=>a+i.count,0), totalBytes:items.reduce((a,i)=>a+i.bytes,0) })
+      setPreview({ items, totalCount:items.reduce((a,i)=>a+i.count,0), totalBytes:items.reduce((a,i)=>a+i.bytes,0), incomplete:items.some(i=>!i.measured) })
     }catch(error){
       setPreview(null)
       setPreviewError(error instanceof Error ? error.message : String(error))
