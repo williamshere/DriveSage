@@ -7,9 +7,9 @@ import Duplicates from './pages/Duplicates.jsx'
 import Cleanup from './pages/Cleanup.jsx'
 import History from './pages/History.jsx'
 import Settings from './pages/Settings.jsx'
-import { mockDrives, mockCleanupFiles, mockHistory, formatBytes } from './lib/drives.js'
-import { buildPreview } from './lib/cleanup.js'
-import { getDB, setDB, addScan, addCleanup } from './lib/db.js'
+import { mockDrives, mockHistory, formatBytes } from './lib/drives.js'
+import { CLEANUP_CATEGORIES } from './lib/cleanup.js'
+import { getDB, setDB, addScan } from './lib/db.js'
 import { getRealDrives } from './lib/tauri.js'
 
 const DEFAULT_SETTINGS={
@@ -59,7 +59,8 @@ export default function App(){
   const [fileCount,setFileCount]=useState(0)
   const [hasScanned,setHasScanned]=useState(false)
   const [scanError,setScanError]=useState('')
-  const [cleanupFiles]=useState(()=> mockCleanupFiles())
+  const [previewError,setPreviewError]=useState('')
+  const [previewing,setPreviewing]=useState(false)
   const [enabledIds,setEnabledIds]=useState(()=> settings.enabledCategories || DEFAULT_SETTINGS.enabledCategories)
   const [deletionMode,setDeletionMode]=useState('recycle')
   const [preview,setPreview]=useState(null)
@@ -70,7 +71,6 @@ export default function App(){
   const [scanCount,setScanCount]=useState(()=>{
     try{ return (JSON.parse(localStorage.getItem('drivesage:db:v1')||'{}').scans||[]).length }catch{return 0}
   })
-  const [executing,setExecuting]=useState(false)
   const [cleanupLog,setCleanupLog]=useState(()=>{
     try{ return JSON.parse(localStorage.getItem('drivesage:db:v1')||'{}').cleanup_actions||[] }catch{return []}
   })
@@ -87,7 +87,8 @@ export default function App(){
         const norm = real.map(normalizeDrive).filter(d=> d.capacityBytes && d.capacityBytes>0)
         if(norm.length){
           setDrives(norm)
-          setHistories(mockHistory(norm))
+          // No snapshots are stored yet, so charts and forecast stay empty rather than showing invented data.
+          setHistories(norm.map(d=>({driveId:d.id,temps:[],frees:[]})))
           setSelectedId(norm[0].id)
           setDrivesSource('real')
           // Also store snapshot for health/forecast
@@ -197,23 +198,27 @@ export default function App(){
     }
   }
 
-  const handlePreview=()=>{
-    const p=buildPreview(cleanupFiles, enabledIds)
-    setPreview(p)
-  }
-  const handleExecute=()=>{
-    if(!preview || preview.totalCount===0) return
-    setExecuting(true)
-    let pct=0
-    const intv=setInterval(()=>{
-      pct+= Math.random()*22+8
-      if(pct>=100){
-        clearInterval(intv)
-        const entry={ ts:Date.now(), mode: deletionMode, count: preview.totalCount, bytes: preview.totalBytes, files: preview.items.flatMap(it=>it.files).slice(0,20) }
-        addCleanup(entry); setCleanupLog(getDB().cleanup_actions)
-        setExecuting(false); setPreview(null)
-      }
-    }, 220)
+  const handlePreview=async()=>{
+    setPreviewError('')
+    if(!window.__TAURI__?.core?.invoke){
+      setPreview(null)
+      setPreviewError('Cleanup preview measures real files and is only available in the DriveSage desktop app.')
+      return
+    }
+    setPreviewing(true)
+    try{
+      const result=await window.__TAURI__.core.invoke('cleanup',{categories:enabledIds})
+      const items=CLEANUP_CATEGORIES.filter(cat=>enabledIds.includes(cat.id)).map(cat=>{
+        const m=result.preview?.[cat.id]
+        return { category:cat, count:Number(m?.Count)||0, bytes:Number(m?.Sum)||0, measured:!!m }
+      })
+      setPreview({ items, totalCount:items.reduce((a,i)=>a+i.count,0), totalBytes:items.reduce((a,i)=>a+i.bytes,0) })
+    }catch(error){
+      setPreview(null)
+      setPreviewError(error instanceof Error ? error.message : String(error))
+    }finally{
+      setPreviewing(false)
+    }
   }
 
   const handleExportJson=()=>{
@@ -240,7 +245,7 @@ export default function App(){
         {page==='drive' && <DriveDetail drive={selectedDrive} history={histories.find(h=>h.driveId===selectedId)} drives={drives} selectedId={selectedId} onSelect={setSelectedId} />}
         {page==='map' && <StorageMap tree={tree} scanning={scanning} progress={progress} onScan={runScan} onStopScan={stopScan} hasScanned={hasScanned} scanError={scanError} />}
         {page==='dupes' && <Duplicates fileCount={fileCount} dupes={dupes} largest={largest} scanning={scanning} progress={progress} onScan={runScan} onStopScan={stopScan} hasScanned={hasScanned} scanError={scanError} />}
-        {page==='cleanup' && <Cleanup cleanupFiles={cleanupFiles} enabledIds={enabledIds} setEnabledIds={setEnabledIds} deletionMode={deletionMode} setDeletionMode={setDeletionMode} onPreview={handlePreview} preview={preview} onExecute={handleExecute} executing={executing} log={cleanupLog} />}
+        {page==='cleanup' && <Cleanup enabledIds={enabledIds} setEnabledIds={setEnabledIds} deletionMode={deletionMode} setDeletionMode={setDeletionMode} onPreview={handlePreview} preview={preview} previewing={previewing} previewError={previewError} log={cleanupLog} />}
         {page==='history' && <History scans={scans} cleanups={cleanupLog} onExport={handleExportJson} />}
         {page==='settings' && <Settings settings={{...settings, theme, enabledCategories: enabledIds}} setSettings={(updater)=>{
           const next = typeof updater==='function' ? updater({...settings, theme, enabledCategories: enabledIds}) : updater

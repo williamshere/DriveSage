@@ -7,11 +7,11 @@ Premium local-first Windows desktop app (Vite + React 18, Recharts) + Tauri v2 R
 - `src-tauri/tauri.conf.json` — productName DriveSage, identifier com.drivesage.app, devUrl http://localhost:1420, frontendDist ../dist, bundle icon
 - `src-tauri/Cargo.toml` — tauri 2, tauri-plugin-shell, serde, rusqlite (bundled), dirs, chrono
 - `src-tauri/src/main.rs` — native Tauri commands wired to Windows PowerShell/WMI and read-only Rust filesystem traversal:
-  1. `drives` — Get-PhysicalDisk + Get-Volume + .NET System.IO.DriveInfo fallback (C: 1.79TB, D: 489GB on this machine)
+  1. `drives` — every fixed/removable volume mapped to its own physical disk (Get-Partition → Get-PhysicalDisk → Get-StorageReliabilityCounter) with .NET DriveInfo for capacity/free; drive type comes from the reported bus/media type, never guessed
   2. `smart` — Get-StorageReliabilityCounter + MSStorageDriver_FailurePredictStatus (degrades to “unavailable” when non-admin/unsupported)
   3. `scanner` — parallel read-only scan of local fixed/removable drives; honors depth, file-count cap, and exclusions; skips system/hidden and protected user folders; returns a real folder map, largest files, and SHA-256-confirmed duplicate groups
   4. `scanner_progress` / `stop_scanner` — scan progress polling and cooperative cancellation
-  5. `cleanup` — allow-list preview only (Win Temp, User Temp, Recycle Bin, thumb cache, DeliveryOpt)
+  5. `cleanup` — allow-list preview only, real file counts/bytes (Win Temp, User Temp, Recycle Bin on all fixed drives, thumb cache, DeliveryOpt); deletion is not implemented
   6. `forecast` — linear days-until-full, 7-day gate → “insufficient history”
   7. `alerts` — temp/wear/freeSpace thresholds, 24h debounce
   8. `db` — rusqlite tables drives/smart_snapshots/scans/cleanup_actions/settings/alert_log
@@ -20,9 +20,8 @@ Premium local-first Windows desktop app (Vite + React 18, Recharts) + Tauri v2 R
 - `src-tauri/icons/icon.png` placeholder
 
 ### Frontend wiring (real drive data and file scans)
-- `src/lib/tauri.js` — invokeTauri + getRealDrives() tries Tauri `drives` → `/api/drives` (Vite dev) → `/real-drives.json` (static) → demo fallback. Shows “unavailable” for any null attribute.
+- `src/lib/tauri.js` — invokeTauri + getRealDrives() uses Tauri `drives`, otherwise the app shows clearly labelled demo data. Shows “unavailable” for any null attribute.
 - `src/App.jsx` — normalizeDrive handles snake/camel + null → “unavailable”; useEffect replaces demo with real drives (C: + D: on this machine) via getRealDrives; banner shows “Real drives connected” + diagnostics note (read-only, never writes).
-- `public/real-drives.json` + `dist/real-drives.json` — generated from .NET DriveInfo on this machine (C: 1798739873792 free 1163695415296, D: 489760485376 free 488891297792)
 
 ### New useful features (added per request)
 - **Export CSV** — Dashboard topbar + Capacity card “Export CSV” / “Download CSV report” via src/lib/export.js (Letter, Model, Serial, Capacity, Free, Used, Type, Health, Temperature, Wear%)
@@ -50,8 +49,8 @@ cargo tauri build # → single .exe in src-tauri/target/release/bundle
 npm test — 19/19 pass (6 suites)
   health (5), forecast (3), duplicates (2), cleanup (4), alerts (3), recommendations (2)
 npm run build — Vite production build succeeded after installing dependencies
-cargo test --manifest-path src-tauri\Cargo.toml — 3 scanner tests passed
-Real drives confirmed on this machine: C: OS Drive 1.79TB (1.16TB free) + D: Data Drive 489GB (488GB free) — SMART fields show “unavailable” when non-admin (read-only, never writes)
+cargo test --manifest-path src-tauri\Cargo.toml — 5 tests passed (3 scanner, 2 drive parsing)
+SMART fields show “unavailable” when a drive does not expose them to Windows (read-only, never writes)
 ```
 
 ### Upgrade added in this pass
