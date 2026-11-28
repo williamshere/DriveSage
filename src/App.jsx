@@ -8,7 +8,7 @@ import Cleanup from './pages/Cleanup.jsx'
 import History from './pages/History.jsx'
 import Settings from './pages/Settings.jsx'
 import { mockDrives, mockHistory, formatBytes } from './lib/drives.js'
-import { CLEANUP_CATEGORIES } from './lib/cleanup.js'
+import { CLEANUP_CATEGORIES, sameCleanupCategories } from './lib/cleanup.js'
 import { getDB, setDB, addScan } from './lib/db.js'
 import { getRealDrives } from './lib/tauri.js'
 
@@ -64,6 +64,9 @@ export default function App(){
   const [enabledIds,setEnabledIds]=useState(()=> settings.enabledCategories || DEFAULT_SETTINGS.enabledCategories)
   const [deletionMode,setDeletionMode]=useState('recycle')
   const [preview,setPreview]=useState(null)
+  const previewRun=useRef(null)
+  const enabledIdsRef=useRef(enabledIds)
+  enabledIdsRef.current=enabledIds
   const [scanning,setScanning]=useState(false)
   const [progress,setProgress]=useState({pct:0, phase:'idle'})
   const scanInProgress=useRef(false)
@@ -109,6 +112,7 @@ export default function App(){
   useEffect(()=>{
     const db = getDB(); db.settings = {...settings, theme, enabledCategories: enabledIds}; setDB(db)
   }, [settings, theme, enabledIds])
+  useEffect(()=>{ setPreview(null) }, [enabledIds])
 
   const handleSelectDrive = useCallback((id) => {
     setSelectedId(id)
@@ -199,25 +203,56 @@ export default function App(){
   }
 
   const handlePreview=async()=>{
+    if(previewRun.current) return
     setPreviewError('')
+    setPreview(null)
     if(!window.__TAURI__?.core?.invoke){
       setPreview(null)
       setPreviewError('Cleanup preview measures real files and is only available in the DriveSage desktop app.')
       return
     }
+    const run={id:null, stopped:false}
+    previewRun.current=run
+    const categories=[...enabledIds]
     setPreviewing(true)
     try{
-      const result=await window.__TAURI__.core.invoke('cleanup',{categories:enabledIds})
-      const items=CLEANUP_CATEGORIES.filter(cat=>enabledIds.includes(cat.id)).map(cat=>{
+      run.id=await window.__TAURI__.core.invoke('start_cleanup')
+      if(run.stopped) await window.__TAURI__.core.invoke('stop_cleanup',{id:run.id})
+      const result=await window.__TAURI__.core.invoke('cleanup',{id:run.id,categories})
+      if(run.stopped) {
+        setPreviewError('Cleanup preview stopped.')
+        return
+      }
+      if(!sameCleanupCategories(categories,enabledIdsRef.current)) {
+        setPreviewError('Categories changed. Build a new preview.')
+        return
+      }
+      const items=CLEANUP_CATEGORIES.filter(cat=>categories.includes(cat.id)).map(cat=>{
         const m=result.preview?.[cat.id]
         return { category:cat, count:Number(m?.Count)||0, bytes:Number(m?.Sum)||0, measured:!!m }
       })
       setPreview({ items, totalCount:items.reduce((a,i)=>a+i.count,0), totalBytes:items.reduce((a,i)=>a+i.bytes,0), incomplete:items.some(i=>!i.measured) })
     }catch(error){
       setPreview(null)
-      setPreviewError(error instanceof Error ? error.message : String(error))
+      setPreviewError(run.stopped ? 'Cleanup preview stopped.' : (error instanceof Error ? error.message : String(error)))
     }finally{
+      previewRun.current=null
       setPreviewing(false)
+    }
+  }
+
+  const stopPreview=async()=>{
+    const run=previewRun.current
+    if(!run || run.stopped) return
+    run.stopped=true
+    setPreview(null)
+    setPreviewError('Stopping cleanup preview…')
+    if(run.id!==null) {
+      try { await window.__TAURI__.core.invoke('stop_cleanup',{id:run.id}) }
+      catch(error) {
+        run.stopped=false
+        setPreviewError(`Could not stop cleanup preview: ${error instanceof Error ? error.message : String(error)}`)
+      }
     }
   }
 
@@ -245,7 +280,7 @@ export default function App(){
         {page==='drive' && <DriveDetail drive={selectedDrive} history={histories.find(h=>h.driveId===selectedId)} drives={drives} selectedId={selectedId} onSelect={setSelectedId} />}
         {page==='map' && <StorageMap tree={tree} scanning={scanning} progress={progress} onScan={runScan} onStopScan={stopScan} hasScanned={hasScanned} scanError={scanError} />}
         {page==='dupes' && <Duplicates fileCount={fileCount} dupes={dupes} largest={largest} scanning={scanning} progress={progress} onScan={runScan} onStopScan={stopScan} hasScanned={hasScanned} scanError={scanError} />}
-        {page==='cleanup' && <Cleanup enabledIds={enabledIds} setEnabledIds={setEnabledIds} deletionMode={deletionMode} setDeletionMode={setDeletionMode} onPreview={handlePreview} preview={preview} previewing={previewing} previewError={previewError} log={cleanupLog} />}
+        {page==='cleanup' && <Cleanup enabledIds={enabledIds} setEnabledIds={setEnabledIds} deletionMode={deletionMode} setDeletionMode={setDeletionMode} onPreview={handlePreview} onStopPreview={stopPreview} preview={preview} previewing={previewing} previewError={previewError} log={cleanupLog} />}
         {page==='history' && <History scans={scans} cleanups={cleanupLog} onExport={handleExportJson} />}
         {page==='settings' && <Settings settings={{...settings, theme, enabledCategories: enabledIds}} setSettings={(updater)=>{
           const next = typeof updater==='function' ? updater({...settings, theme, enabledCategories: enabledIds}) : updater

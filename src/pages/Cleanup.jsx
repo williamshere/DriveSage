@@ -2,7 +2,7 @@ import { useMemo, useCallback } from 'react'
 import { formatBytes } from '../lib/drives.js'
 import { CLEANUP_CATEGORIES } from '../lib/cleanup.js'
 
-export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDeletionMode, onPreview, preview, previewing, previewError, log }){
+export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDeletionMode, onPreview, onStopPreview, preview, previewing, previewError, log }){
   const toggle = useCallback((id)=>{
     setEnabledIds(ids=> ids.includes(id)? ids.filter(x=>x!==id) : [...ids, id])
   }, [setEnabledIds])
@@ -51,6 +51,7 @@ export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDe
           <div className="card-body" style={{display:'flex',flexDirection:'column',gap:10}}>
             {categoriesList}
             <button className="btn btn-primary" onClick={onPreview} disabled={previewing || enabledIds.length===0}>{previewing ? 'Measuring…' : 'Build preview'}</button>
+            {previewing && <button className="btn" onClick={onStopPreview}>Stop</button>}
             {deletionMode==='permanent' && <div style={{fontSize:11,color:'var(--red)',fontWeight:700}}>Permanent delete will bypass Recycle Bin for this run.</div>}
           </div>
         </div>

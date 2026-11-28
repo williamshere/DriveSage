@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { isProtectedPath, buildPreview } from '../src/lib/cleanup.js'
+import { isProtectedPath, buildPreview, sameCleanupCategories } from '../src/lib/cleanup.js'
 
 describe('cleanup safety', ()=>{
   it('protects Windows', ()=>{
@@ -18,5 +18,10 @@ describe('cleanup safety', ()=>{
     const p=buildPreview(filesByCat, ['winTemp'])
     assert.equal(p.totalCount,2)
     assert.equal(p.totalBytes,300)
+  })
+  it('only accepts previews for the current category selection', ()=>{
+    assert.equal(sameCleanupCategories(['winTemp', 'userTemp'], ['userTemp', 'winTemp']), true)
+    assert.equal(sameCleanupCategories(['winTemp'], ['userTemp']), false)
+    assert.equal(sameCleanupCategories(['winTemp'], ['winTemp', 'userTemp']), false)
   })
 })
