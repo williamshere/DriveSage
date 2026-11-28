@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::State;
@@ -31,8 +31,26 @@ fn powershell_exe() -> PathBuf {
 }
 
 fn run_powershell(script: &str) -> Result<String, String> {
+    let output = powershell_command(script)
+        .output()
+        .map_err(|e| format!("powershell spawn failed: {}", e))?;
+    if !output.status.success() {
+        return Err(format!(
+            "powershell error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn run_powershell_cancellable(script: &str, cancelled: &AtomicBool) -> Result<String, String> {
+    run_command_cancellable(&mut powershell_command(script), cancelled)
+}
+
+fn powershell_command(script: &str) -> Command {
+    // Emit UTF-8 bytes straight to stdout so output never depends on the console code page.
     let script = format!(
-        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; {}",
+        "$__out = (& {{ {} }} | Out-String); $__bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($__out); $__stdout = [Console]::OpenStandardOutput(); $__stdout.Write($__bytes, 0, $__bytes.Length); $__stdout.Flush()",
         script
     );
     let mut command = Command::new(powershell_exe());
@@ -43,14 +61,63 @@ fn run_powershell(script: &str) -> Result<String, String> {
         // CREATE_NO_WINDOW: no console flash in the GUI app.
         command.creation_flags(0x0800_0000);
     }
-    let output = command
-        .output()
+    command
+}
+
+fn run_command_cancellable(
+    command: &mut Command,
+    cancelled: &AtomicBool,
+) -> Result<String, String> {
+    if cancelled.load(Ordering::SeqCst) {
+        return Err("Cleanup preview stopped.".to_string());
+    }
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("powershell spawn failed: {}", e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let out_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let status = loop {
+        if cancelled.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            break child.wait();
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(error);
+            }
+        }
+    };
+    let stdout = out_reader
+        .join()
+        .map_err(|_| "powershell stdout reader failed")?
+        .map_err(|e| e.to_string())?;
+    let stderr = err_reader
+        .join()
+        .map_err(|_| "powershell stderr reader failed")?
+        .map_err(|e| e.to_string())?;
+    if cancelled.load(Ordering::SeqCst) {
+        return Err("Cleanup preview stopped.".to_string());
+    }
+    let status = status.map_err(|e| format!("powershell wait failed: {}", e))?;
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr).to_string();
         return Err(format!("powershell error: {}", stderr));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(String::from_utf8_lossy(&stdout).to_string())
 }
 
 fn db_path() -> PathBuf {
@@ -243,12 +310,12 @@ foreach ($d in [System.IO.DriveInfo]::GetDrives()) {
 ConvertTo-Json -InputObject @($rows) -Depth 4 -Compress
 "#;
 
-fn classify_drive_type(media: &str, bus: &str, removable: bool) -> String {
+fn classify_drive_type(media: &str, bus: &str) -> String {
     let media = media.to_lowercase();
     let bus = bus.to_lowercase();
     if bus == "nvme" {
         "NVMe".to_string()
-    } else if bus == "usb" || (removable && media.is_empty()) {
+    } else if bus == "usb" {
         "USB".to_string()
     } else if media == "ssd" {
         "SSD".to_string()
@@ -279,7 +346,6 @@ fn parse_drive_rows(json: &str) -> Result<Vec<DriveInfo>, String> {
         let Some(letter) = non_empty(row.get("letter")).map(|l| l.to_uppercase()) else {
             continue;
         };
-        let removable = row.get("removable").and_then(|v| v.as_bool()).unwrap_or(false);
         let disk = row.get("disk").filter(|d| d.is_object());
         let field = |name: &str| disk.and_then(|d| d.get(name));
         let media = non_empty(field("media")).unwrap_or_default();
@@ -305,7 +371,7 @@ fn parse_drive_rows(json: &str) -> Result<Vec<DriveInfo>, String> {
             pending: None,
             crc_errors: None,
             power_on_hours: field("hours").and_then(|v| v.as_u64()).map(|h| h as u32),
-            drive_type: classify_drive_type(&media, bus.as_deref().unwrap_or(""), removable),
+            drive_type: classify_drive_type(&media, bus.as_deref().unwrap_or("")),
             health_status: non_empty(field("health")),
             bus_type: bus,
         });
@@ -803,9 +869,95 @@ fn stop_scanner(state: State<'_, ScannerState>) -> Result<bool, String> {
     }
 }
 
+#[derive(Default)]
+struct CleanupState {
+    next_id: AtomicU64,
+    active: Mutex<Option<(u64, Arc<AtomicBool>)>>,
+}
+
+#[tauri::command]
+fn start_cleanup(state: State<'_, CleanupState>) -> Result<u64, String> {
+    let mut active = state
+        .active
+        .lock()
+        .map_err(|_| "cleanup state is unavailable")?;
+    if active.is_some() {
+        return Err("A cleanup preview is already running.".to_string());
+    }
+    let id = state.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+    *active = Some((id, Arc::new(AtomicBool::new(false))));
+    Ok(id)
+}
+
+#[tauri::command]
+fn stop_cleanup(state: State<'_, CleanupState>, id: u64) -> Result<bool, String> {
+    let active = state
+        .active
+        .lock()
+        .map_err(|_| "cleanup state is unavailable")?;
+    if let Some((_, cancelled)) = active.as_ref().filter(|(current, _)| *current == id) {
+        cancelled.store(true, Ordering::SeqCst);
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+const RECYCLE_BIN_SCRIPT: &str = r#"
+try {
+    [uint64]$count = 0; [uint64]$bytes = 0
+    foreach ($d in [System.IO.DriveInfo]::GetDrives()) {
+        if ($d.DriveType -ne 'Fixed' -or -not $d.IsReady) { continue }
+        $bin = $d.Name + '$Recycle.Bin'
+        if (-not (Test-Path -LiteralPath $bin -ErrorAction Stop)) { continue }
+        $measurement = Get-ChildItem -LiteralPath $bin -Recurse -Force -File -ErrorAction Stop |
+            Measure-Object -Property Length -Sum -ErrorAction Stop
+        $count += $measurement.Count; $bytes += $measurement.Sum
+    }
+    @{ Count = $count; Sum = $bytes } | ConvertTo-Json -Compress
+} catch { 'null' }
+"#;
+
 // 5. cleanup — Build preview per category (read-only preview)
 #[tauri::command]
-fn cleanup(categories: Option<Vec<String>>) -> Result<serde_json::Value, String> {
+async fn cleanup(
+    state: State<'_, CleanupState>,
+    id: u64,
+    categories: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
+    let cancelled = {
+        let active = state
+            .active
+            .lock()
+            .map_err(|_| "cleanup state is unavailable")?;
+        active
+            .as_ref()
+            .filter(|(current, _)| *current == id)
+            .map(|(_, cancelled)| cancelled.clone())
+            .ok_or("Cleanup preview is not active.")?
+    };
+    let worker_cancelled = cancelled.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        measure_cleanup(categories, &worker_cancelled)
+    })
+    .await;
+    let mut active = state
+        .active
+        .lock()
+        .map_err(|_| "cleanup state is unavailable")?;
+    if active.as_ref().is_some_and(|(current, _)| *current == id) {
+        *active = None;
+    }
+    if cancelled.load(Ordering::SeqCst) {
+        return Err("Cleanup preview stopped.".to_string());
+    }
+    result.map_err(|error| format!("cleanup worker failed: {error}"))?
+}
+
+fn measure_cleanup(
+    categories: Option<Vec<String>>,
+    cancelled: &AtomicBool,
+) -> Result<serde_json::Value, String> {
     let cats = categories
         .unwrap_or_else(|| vec!["winTemp".into(), "userTemp".into(), "recycleBin".into()]);
     // Only allow-listed categories (safety)
@@ -829,9 +981,7 @@ fn cleanup(categories: Option<Vec<String>>) -> Result<serde_json::Value, String>
             "userTemp" => {
                 r#"Get-ChildItem -Path $env:TEMP -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
             }
-            "recycleBin" => {
-                r#"[System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | ForEach-Object { Get-ChildItem -LiteralPath ($_.Name + '$Recycle.Bin') -Recurse -Force -File -ErrorAction SilentlyContinue } | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
-            }
+            "recycleBin" => RECYCLE_BIN_SCRIPT,
             "thumbCache" => {
                 r#"Get-ChildItem -Path "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache*.db" -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
             }
@@ -840,13 +990,50 @@ fn cleanup(categories: Option<Vec<String>>) -> Result<serde_json::Value, String>
             }
             _ => "null",
         };
-        let out = run_powershell(ps).unwrap_or_else(|_| "null".to_string());
+        let out = run_powershell_cancellable(ps, cancelled).unwrap_or_else(|_| "null".to_string());
+        if cancelled.load(Ordering::SeqCst) {
+            return Err("Cleanup preview stopped.".to_string());
+        }
         let v: serde_json::Value = serde_json::from_str(&out).unwrap_or(serde_json::Value::Null);
         preview.insert(cat.clone(), v);
+    }
+    if cancelled.load(Ordering::SeqCst) {
+        return Err("Cleanup preview stopped.".to_string());
     }
     Ok(
         serde_json::json!({ "preview": preview, "allowed": allowed, "mode": "preview-only read-only" }),
     )
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn cancelled_cleanup_never_returns_a_preview() {
+        let cancelled = AtomicBool::new(true);
+        assert_eq!(
+            measure_cleanup(Some(Vec::new()), &cancelled).unwrap_err(),
+            "Cleanup preview stopped."
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_terminates_running_measurement() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let signal = cancelled.clone();
+        let stopper = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            signal.store(true, Ordering::SeqCst);
+        });
+        let start = std::time::Instant::now();
+        let result =
+            run_command_cancellable(Command::new("sh").args(["-c", "exec sleep 10"]), &cancelled);
+        stopper.join().unwrap();
+        assert_eq!(result.unwrap_err(), "Cleanup preview stopped.");
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
 }
 
 // 6. forecast — From free-space history, estimate days until full (read-only calc)
@@ -1002,10 +1189,11 @@ mod drive_tests {
         let json = r#"[
             {"letter":"c","total":1000,"free":400,"removable":false,"disk":{"model":"Samsung 980","serial":" S6C2 ","media":"SSD","bus":"NVMe","health":"Healthy","temp":41,"wear":7,"hours":812}},
             {"letter":"D","total":4000,"free":10,"removable":false,"disk":{"model":"WD Blue","serial":"","media":"HDD","bus":"SATA","health":"Healthy","temp":0,"wear":null,"hours":null}},
-            {"letter":"E","total":8,"free":4,"removable":true,"disk":null}
+            {"letter":"E","total":8,"free":4,"removable":true,"disk":null},
+            {"letter":"F","total":8,"free":4,"removable":true,"disk":{"model":"Stick","serial":"x","media":"Unspecified","bus":"USB","health":"Healthy"}}
         ]"#;
         let drives = parse_drive_rows(json).unwrap();
-        assert_eq!(drives.len(), 3);
+        assert_eq!(drives.len(), 4);
         assert_eq!(drives[0].letter.as_deref(), Some("C:"));
         assert_eq!(drives[0].drive_type, "NVMe");
         assert_eq!(drives[0].serial, "S6C2");
@@ -1016,7 +1204,8 @@ mod drive_tests {
         assert_eq!(drives[1].temperature, None);
         assert_eq!(drives[1].wear_percent, None);
         assert_eq!(drives[2].model, "Unknown model");
-        assert_eq!(drives[2].drive_type, "USB");
+        assert_eq!(drives[2].drive_type, "Unknown");
+        assert_eq!(drives[3].drive_type, "USB");
         assert_eq!(drives[2].capacity_bytes, Some(8));
     }
 
@@ -1135,6 +1324,7 @@ mod scanner_tests {
 fn main() {
     tauri::Builder::default()
         .manage(ScannerState::default())
+        .manage(CleanupState::default())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             drives,
@@ -1142,6 +1332,8 @@ fn main() {
             scanner,
             scanner_progress,
             stop_scanner,
+            start_cleanup,
+            stop_cleanup,
             cleanup,
             forecast,
             alerts,

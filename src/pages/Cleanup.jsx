@@ -2,7 +2,7 @@ import { useMemo, useCallback } from 'react'
 import { formatBytes } from '../lib/drives.js'
 import { CLEANUP_CATEGORIES } from '../lib/cleanup.js'
 
-export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDeletionMode, onPreview, preview, previewing, previewError, log }){
+export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDeletionMode, onPreview, onStopPreview, preview, previewing, previewError, log }){
   const toggle = useCallback((id)=>{
     setEnabledIds(ids=> ids.includes(id)? ids.filter(x=>x!==id) : [...ids, id])
   }, [setEnabledIds])
@@ -18,7 +18,7 @@ export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDe
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontWeight:700,fontSize:13}}>{cat.label}</div>
             <div style={{fontSize:11,color:'var(--muted)'}}>{cat.desc}</div>
-            <div className="mono" style={{fontSize:11,color:'var(--muted)',marginTop:4}}>{item ? `${item.count.toLocaleString()} files • ${formatBytes(item.bytes)}` : 'not measured yet'}</div>
+            <div className="mono" style={{fontSize:11,color:'var(--muted)',marginTop:4}}>{item?.measured ? `${item.count.toLocaleString()} files • ${formatBytes(item.bytes)}` : (item ? 'unavailable' : 'not measured yet')}</div>
           </div>
         </label>
       )
@@ -51,12 +51,13 @@ export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDe
           <div className="card-body" style={{display:'flex',flexDirection:'column',gap:10}}>
             {categoriesList}
             <button className="btn btn-primary" onClick={onPreview} disabled={previewing || enabledIds.length===0}>{previewing ? 'Measuring…' : 'Build preview'}</button>
+            {previewing && <button className="btn" onClick={onStopPreview}>Stop</button>}
             {deletionMode==='permanent' && <div style={{fontSize:11,color:'var(--red)',fontWeight:700}}>Permanent delete will bypass Recycle Bin for this run.</div>}
           </div>
         </div>
 
         <div className="card">
-          <div className="card-head"><div className="card-title">Preview</div><span className="card-sub mono">{preview? `${preview.totalCount} files • ${formatBytes(preview.totalBytes)}` : 'no preview yet'}</span></div>
+          <div className="card-head"><div className="card-title">Preview</div><span className="card-sub mono">{preview? `${preview.totalCount} files • ${formatBytes(preview.totalBytes)}${preview.incomplete?' (incomplete — some categories unavailable)':''}` : 'no preview yet'}</span></div>
           <div className="card-body" style={{padding:0}}>
             {!preview? <div style={{padding:24,color:'var(--muted)',fontSize:13}}>{previewError || 'Select categories and build a preview to measure the real file count and bytes in each category.'}</div> : (
               <>
@@ -64,7 +65,7 @@ export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDe
                   <thead><tr><th>Category</th><th>Count</th><th>Bytes</th></tr></thead>
                   <tbody>
                     {preview.items.map(it=>(
-                      <tr key={it.category.id}><td style={{fontWeight:650}}>{it.category.label}</td><td className="mono">{it.count}</td><td className="mono">{formatBytes(it.bytes)}</td></tr>
+                      <tr key={it.category.id}><td style={{fontWeight:650}}>{it.category.label}</td><td className="mono">{it.measured===false?'unavailable':it.count}</td><td className="mono">{it.measured===false?'unavailable':formatBytes(it.bytes)}</td></tr>
                     ))}
                   </tbody>
                 </table>

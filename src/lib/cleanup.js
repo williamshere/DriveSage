@@ -43,3 +43,6 @@ export function filterAllowedDeletions(previewItems, exclusions=[]){
   }
   return safe
 }
+export function sameCleanupCategories(left, right) {
+  return left.length === right.length && left.every(id => right.includes(id))
+}
