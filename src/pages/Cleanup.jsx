@@ -39,9 +39,9 @@ export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDe
       </div>
 
       <div className="alert-banner">
-        <span>⚠</span>
+        <span>ℹ</span>
         <div style={{fontSize:12,lineHeight:1.5}}>
-          <b>Safety rules:</b> Only allow-listed categories are cleanable. Protected paths (<span className="mono">C:\Windows, Program Files, Documents/Pictures/Desktop/Downloads</span>) are never touched unless you explicitly add them in Settings. Counts include only files Windows lets this app read (Windows Temp and Delivery Optimization may be partly hidden without administrator rights).
+          <b>Preview only:</b> No files are deleted. Only allow-listed categories are cleanable. Protected paths (<span className="mono">C:\Windows, Program Files, Documents/Pictures/Desktop/Downloads</span>) are never touched unless you explicitly add them in Settings. Counts include only files Windows lets this app read (Windows Temp and Delivery Optimization may be partly hidden without administrator rights).
         </div>
       </div>
 
@@ -73,7 +73,7 @@ export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDe
             )}
           </div>
           <div style={{padding:'12px 14px', borderTop:'1px solid var(--border)'}}>
-            <div style={{fontWeight:750,fontSize:12,marginBottom:8}}>Recent actions</div>
+            <div style={{fontWeight:750,fontSize:12,marginBottom:8}}>Previously recorded entries (not verified)</div>
             {log.length===0? <div style={{fontSize:12,color:'var(--muted)'}}>No cleanups yet.</div> : log.slice(-5).reverse().map((e,i)=>(
               <div key={i} className="mono" style={{fontSize:11,padding:'6px 0',borderBottom:'1px solid var(--border)',color:'var(--muted)'}}>
                 {new Date(e.ts).toLocaleString()} — {e.mode} — {e.count} files • {formatBytes(e.bytes)} {e.files?.slice(0,1).map(f=>`— ${f.path}`).join('')}
