@@ -62,7 +62,6 @@ export default function App(){
   const [previewError,setPreviewError]=useState('')
   const [previewing,setPreviewing]=useState(false)
   const [enabledIds,setEnabledIds]=useState(()=> settings.enabledCategories || DEFAULT_SETTINGS.enabledCategories)
-  const [deletionMode,setDeletionMode]=useState('recycle')
   const [preview,setPreview]=useState(null)
   const [scanning,setScanning]=useState(false)
   const [progress,setProgress]=useState({pct:0, phase:'idle'})
@@ -87,8 +86,7 @@ export default function App(){
         const norm = real.map(normalizeDrive).filter(d=> d.capacityBytes && d.capacityBytes>0)
         if(norm.length){
           setDrives(norm)
-          // No snapshots are stored yet, so charts and forecast stay empty rather than showing invented data.
-          setHistories(norm.map(d=>({driveId:d.id,temps:[],frees:[]})))
+          setHistories([])
           setSelectedId(norm[0].id)
           setDrivesSource('real')
           // Also store snapshot for health/forecast
@@ -245,7 +243,7 @@ export default function App(){
         {page==='drive' && <DriveDetail drive={selectedDrive} history={histories.find(h=>h.driveId===selectedId)} drives={drives} selectedId={selectedId} onSelect={setSelectedId} />}
         {page==='map' && <StorageMap tree={tree} scanning={scanning} progress={progress} onScan={runScan} onStopScan={stopScan} hasScanned={hasScanned} scanError={scanError} />}
         {page==='dupes' && <Duplicates fileCount={fileCount} dupes={dupes} largest={largest} scanning={scanning} progress={progress} onScan={runScan} onStopScan={stopScan} hasScanned={hasScanned} scanError={scanError} />}
-        {page==='cleanup' && <Cleanup enabledIds={enabledIds} setEnabledIds={setEnabledIds} deletionMode={deletionMode} setDeletionMode={setDeletionMode} onPreview={handlePreview} preview={preview} previewing={previewing} previewError={previewError} log={cleanupLog} />}
+        {page==='cleanup' && <Cleanup enabledIds={enabledIds} setEnabledIds={setEnabledIds} onPreview={handlePreview} preview={preview} previewing={previewing} previewError={previewError} log={cleanupLog} />}
         {page==='history' && <History scans={scans} cleanups={cleanupLog} onExport={handleExportJson} />}
         {page==='settings' && <Settings settings={{...settings, theme, enabledCategories: enabledIds}} setSettings={(updater)=>{
           const next = typeof updater==='function' ? updater({...settings, theme, enabledCategories: enabledIds}) : updater
