@@ -1,8 +1,8 @@
 import { useMemo, useCallback } from 'react'
 import { formatBytes } from '../lib/drives.js'
-import { CLEANUP_CATEGORIES, buildPreview } from '../lib/cleanup.js'
+import { CLEANUP_CATEGORIES } from '../lib/cleanup.js'
 
-export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, onPreview, preview, log }){
+export default function Cleanup({ enabledIds, setEnabledIds, onPreview, preview, previewing, previewError, log }){
   const toggle = useCallback((id)=>{
     setEnabledIds(ids=> ids.includes(id)? ids.filter(x=>x!==id) : [...ids, id])
   }, [setEnabledIds])
@@ -10,8 +10,7 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, onPre
   // ⚡ Bolt: memoize category list rendering to avoid recalculating file counts and sizes on every render
   const categoriesList = useMemo(() => {
     return CLEANUP_CATEGORIES.map(cat=>{
-      const files=cleanupFiles[cat.id]||[]
-      const bytes=files.reduce((a,b)=>a+b.size,0)
+      const item=preview?.items.find(it=>it.category.id===cat.id)
       const on=enabledIds.includes(cat.id)
       return (
         <label key={cat.id} style={{display:'flex',gap:10,alignItems:'flex-start',padding:'10px',borderRadius:10,border:`1px solid ${on?'#2a6b5a':'var(--border)'}`,background: on? 'var(--teal-dim)':'var(--panel-2)',cursor:'pointer'}}>
@@ -19,22 +18,22 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, onPre
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontWeight:700,fontSize:13}}>{cat.label}</div>
             <div style={{fontSize:11,color:'var(--muted)'}}>{cat.desc}</div>
-            <div className="mono" style={{fontSize:11,color:'var(--muted)',marginTop:4}}>{files.length} files • {formatBytes(bytes)}</div>
+            <div className="mono" style={{fontSize:11,color:'var(--muted)',marginTop:4}}>{item ? `${item.count.toLocaleString()} files • ${formatBytes(item.bytes)}` : 'not measured yet'}</div>
           </div>
         </label>
       )
     })
-  }, [cleanupFiles, enabledIds, toggle])
+  }, [preview, enabledIds, toggle])
   return (
     <div>
       <div className="topbar">
-        <h1 className="h1">Cleanup <small style={{color:'var(--amber)',fontWeight:700}}>Sample preview only</small></h1>
+        <h1 className="h1">Cleanup <small style={{color:'var(--amber)',fontWeight:700}}>Preview only — this build never deletes files</small></h1>
       </div>
 
       <div className="alert-banner">
         <span>ℹ</span>
         <div style={{fontSize:12,lineHeight:1.5}}>
-        <b>Preview only:</b> The listed files and sizes are sample data. DriveSage does not inspect or delete any files from this screen.
+          <b>Preview only:</b> Counts include only files Windows lets this app read (Windows Temp and Delivery Optimization may be partly hidden without administrator rights). No files are deleted.
         </div>
       </div>
 
@@ -43,14 +42,14 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, onPre
           <div className="card-head"><div className="card-title">Categories</div><span className="card-sub">allow-list only</span></div>
           <div className="card-body" style={{display:'flex',flexDirection:'column',gap:10}}>
             {categoriesList}
-            <button className="btn btn-primary" onClick={onPreview} disabled={enabledIds.length===0}>Build sample preview</button>
+            <button className="btn btn-primary" onClick={onPreview} disabled={previewing || enabledIds.length===0}>{previewing ? 'Measuring…' : 'Build preview'}</button>
           </div>
         </div>
 
         <div className="card">
-          <div className="card-head"><div className="card-title">Sample preview</div><span className="card-sub mono">{preview? `${preview.totalCount} files • ${formatBytes(preview.totalBytes)}` : 'no preview yet'}</span></div>
+          <div className="card-head"><div className="card-title">Preview</div><span className="card-sub mono">{preview? `${preview.totalCount} files • ${formatBytes(preview.totalBytes)}` : 'no preview yet'}</span></div>
           <div className="card-body" style={{padding:0}}>
-            {!preview? <div style={{padding:24,color:'var(--muted)',fontSize:13}}>Select categories to build a sample preview. No files are inspected or deleted.</div> : (
+            {!preview? <div style={{padding:24,color:'var(--muted)',fontSize:13}}>{previewError || 'Select categories and build a preview to measure the real file count and bytes in each category.'}</div> : (
               <>
                 <table className="table">
                   <thead><tr><th>Category</th><th>Count</th><th>Bytes</th></tr></thead>
@@ -60,7 +59,7 @@ export default function Cleanup({ cleanupFiles, enabledIds, setEnabledIds, onPre
                     ))}
                   </tbody>
                 </table>
-                <div style={{padding:14,fontSize:12,color:'var(--muted)'}}>Deletion is not available in this preview.</div>
+                <div style={{padding:14,fontSize:12,color:'var(--muted)'}}>Deleting files from this screen is not available yet, so nothing was removed. Use Windows Disk Cleanup or Storage Sense to reclaim this space.</div>
               </>
             )}
           </div>

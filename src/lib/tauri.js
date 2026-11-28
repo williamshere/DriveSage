@@ -17,26 +17,7 @@
    data = await invokeTauri('get_drives')
    if (data && data.drives && data.drives.length) return data.drives
 
-   // 2) Vite dev server API (if vite.config adds /api/drives)
-   try {
-     const r = await fetch('/api/drives')
-     if (r.ok) {
-       const j = await r.json()
-       if (j.drives && j.drives.length) return j.drives
-     }
-   } catch {}
-
-   // 3) Static real-drives.json generated from .NET DriveInfo at build time (this machine: C: 1.79TB, D: 489GB)
-   try {
-     const r = await fetch('/real-drives.json')
-     if (r.ok) {
-       const j = await r.json()
-       if (Array.isArray(j) && j.length) return j
-       if (j.drives && j.drives.length) return j.drives
-     }
-   } catch {}
-
-   // 4) unavailable — caller shows demo with note
+   // Not running inside the desktop app (or detection failed): caller shows labelled demo data.
    return null
  }
 
@@ -45,9 +26,6 @@
    if (d) return d
    d = await invokeTauri('get_smart', {driveId})
    if(d) return d
-   try { const r=await fetch(`/api/smart?drive=${encodeURIComponent(driveId)}`); if(r.ok) return await r.json() } catch {}
-   // also try static
-   try { const r=await fetch('/real-drives.json'); if(r.ok){ const j=await r.json(); const arr=Array.isArray(j)?j:j.drives||[]; const found=arr.find(x=>x.id===driveId); if(found) return {attributes: found} } } catch {}
    return null
  }
 

@@ -15,9 +15,35 @@ use tauri::State;
 
 // ---------- helpers ----------
 
+// Prefer the absolute path so detection works even when PATH is restricted.
+fn powershell_exe() -> PathBuf {
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        let candidate = PathBuf::from(root)
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    PathBuf::from("powershell")
+}
+
 fn run_powershell(script: &str) -> Result<String, String> {
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", script])
+    let script = format!(
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; {}",
+        script
+    );
+    let mut command = Command::new(powershell_exe());
+    command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: no console flash in the GUI app.
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command
         .output()
         .map_err(|e| format!("powershell spawn failed: {}", e))?;
     if !output.status.success() {
@@ -172,196 +198,151 @@ impl ScanContext {
 }
 
 // ---------- Tauri commands ----------
-// 1. drives — Detect physical drives, partitions, models, serials, capacity (read-only)
-#[tauri::command]
-fn drives() -> Result<serde_json::Value, String> {
-    // Try WMI Get-PhysicalDisk + Get-Volume (requires admin, may fail) — degrade gracefully
-    let ps_script = r#"
-        $ErrorActionPreference='SilentlyContinue';
-        try { $disks = Get-PhysicalDisk | Select FriendlyName,MediaType,BusType,Size,HealthStatus,OperationalStatus,SerialNumber,DeviceId | ConvertTo-Json -Depth 2 -Compress } catch { $disks='[]' }
-        if (-not $disks) { $disks='[]' }
-        try { $vols = Get-Volume | Where DriveLetter -ne $null | Select DriveLetter,Size,SizeRemaining,FileSystem,HealthStatus | ConvertTo-Json -Depth 2 -Compress } catch { $vols='[]' }
-        if (-not $vols) { $vols='[]' }
-        try { $rel = Get-PhysicalDisk | ForEach { try { Get-StorageReliabilityCounter -PhysicalDisk $_ | Select Temperature,Wear,ReadErrorsTotal,PowerOnHours | ConvertTo-Json -Compress } catch {'null'} } } catch {}
-        @{disks=$disks; vols=$vols} | ConvertTo-Json -Compress
-    "#;
-    let wmi_result = run_powershell(ps_script);
+// 1. drives — Detect every fixed/removable volume and map it to its physical disk (read-only)
+const DRIVE_SCRIPT: &str = r#"
+$ErrorActionPreference='SilentlyContinue'
+function Get-BackingPhysicalDisk($letter) {
+  try {
+    $partitions = @(Get-Partition -DriveLetter $letter -ErrorAction Stop)
+    if ($partitions.Count -ne 1) { return }
+    $osDisks = @(Get-Disk -Partition $partitions[0] -ErrorAction Stop)
+    if ($osDisks.Count -ne 1) { return }
+    $osDisk = $osDisks[0]
+    $virtualDisks = @(Get-CimAssociatedInstance -Namespace 'root/Microsoft/Windows/Storage' -InputObject $osDisk -ResultClassName MSFT_VirtualDisk -ErrorAction Stop)
+    if ($virtualDisks.Count -gt 1) { return }
+    if ($virtualDisks.Count -eq 1) {
+      $physicalDisks = @(Get-PhysicalDisk -VirtualDisk $virtualDisks[0] -ErrorAction Stop)
+    } else {
+      $physicalDisks = @(Get-CimAssociatedInstance -Namespace 'root/Microsoft/Windows/Storage' -InputObject $osDisk -ResultClassName MSFT_PhysicalDisk -ErrorAction Stop)
+      if ($physicalDisks.Count -eq 0) {
+        $counters = @(Get-CimAssociatedInstance -Namespace 'root/Microsoft/Windows/Storage' -InputObject $osDisk -ResultClassName MSFT_StorageReliabilityCounter -ErrorAction Stop)
+        if ($counters.Count -ne 1) { return }
+        $physicalDisks = @(Get-CimAssociatedInstance -Namespace 'root/Microsoft/Windows/Storage' -InputObject $counters[0] -ResultClassName MSFT_PhysicalDisk -ErrorAction Stop)
+      }
+    }
+    if ($physicalDisks.Count -eq 1) { return $physicalDisks[0] }
+  } catch {}
+}
+$rows=@()
+foreach ($d in [System.IO.DriveInfo]::GetDrives()) {
+  if (($d.DriveType -ne 'Fixed' -and $d.DriveType -ne 'Removable') -or -not $d.IsReady) { continue }
+  $letter = $d.Name.Substring(0,1)
+  $disk = $null
+  $physical = Get-BackingPhysicalDisk $letter
+  if ($physical) {
+    $c=$null
+    try { $c = $physical | Get-StorageReliabilityCounter -ErrorAction Stop } catch {}
+    $disk = [pscustomobject]@{
+      model=$physical.FriendlyName; serial=$physical.SerialNumber; media=[string]$physical.MediaType;
+      bus=[string]$physical.BusType; health=[string]$physical.HealthStatus;
+      temp=$c.Temperature; wear=$c.Wear; hours=$c.PowerOnHours
+    }
+  }
+  $rows += [pscustomobject]@{ letter=$letter; total=$d.TotalSize; free=$d.AvailableFreeSpace; removable=($d.DriveType -eq 'Removable'); disk=$disk }
+}
+ConvertTo-Json -InputObject @($rows) -Depth 4 -Compress
+"#;
 
-    // Always also collect .NET DriveInfo (works without admin) for real capacity/free
-    let mut drives: Vec<DriveInfo> = Vec::new();
-    // Use filesystem drives via Rust std
-    for (idx, letter) in ["C", "D", "E", "F", "G"].iter().enumerate() {
-        let path = format!("{}:\\", letter);
-        if let Ok(meta) = std::fs::metadata(&path) {
-            let _ = meta;
-            // Try to get size via powershell .NET as fallback per-drive
-            let cap_script = format!(
-                r#"[System.IO.DriveInfo]::GetDrives() | Where Name -eq '{}:\' | Select TotalSize,AvailableFreeSpace | ConvertTo-Json -Compress"#,
-                letter
-            );
-            let mut capacity: Option<u64> = None;
-            let mut free: Option<u64> = None;
-            if let Ok(out) = run_powershell(&cap_script) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) {
-                    capacity = v.get("TotalSize").and_then(|x| x.as_u64());
-                    free = v.get("AvailableFreeSpace").and_then(|x| x.as_u64());
-                    // fallback if array
-                    if capacity.is_none() {
-                        if let Some(arr) = v.as_array() {
-                            if let Some(first) = arr.first() {
-                                capacity = first.get("TotalSize").and_then(|x| x.as_u64());
-                                free = first.get("AvailableFreeSpace").and_then(|x| x.as_u64());
-                            }
-                        }
-                    }
-                }
-            }
-            // Determine type via simple heuristic
-            let drive_type = if *letter == "C" {
-                "NVMe".to_string()
-            } else if *letter == "D" {
-                "HDD".to_string()
-            } else {
-                "Fixed".to_string()
-            };
-            // Try to parse WMI disks for model/serial if available
-            let mut model = format!("Drive {}", letter);
-            let mut serial = format!("unknown-{}", idx);
-            let mut bus_type: Option<String> = None;
-            let mut health: Option<String> = None;
-            if let Ok(ref wmi) = wmi_result {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(wmi) {
-                    if let Some(disks_str) = parsed.get("disks").and_then(|x| x.as_str()) {
-                        if let Ok(disks) = serde_json::from_str::<serde_json::Value>(disks_str) {
-                            let arr: Vec<serde_json::Value> = if disks.is_array() {
-                                disks.as_array().unwrap().clone()
-                            } else {
-                                vec![disks]
-                            };
-                            if let Some(d) = arr.get(idx) {
-                                if let Some(name) = d.get("FriendlyName").and_then(|x| x.as_str()) {
-                                    model = name.to_string();
-                                }
-                                if let Some(s) = d.get("SerialNumber").and_then(|x| x.as_str()) {
-                                    if !s.trim().is_empty() {
-                                        serial = s.trim().to_string();
-                                    }
-                                }
-                                bus_type = d
-                                    .get("BusType")
-                                    .and_then(|x| x.as_str())
-                                    .map(|s| s.to_string());
-                                health = d
-                                    .get("HealthStatus")
-                                    .and_then(|x| x.as_str())
-                                    .map(|s| s.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            // If capacity still none, try Rust stat (fallback: use 0)
-            drives.push(DriveInfo {
-                id: format!("drive{}", idx),
-                letter: Some(format!("{}:", letter)),
-                model,
-                serial,
-                capacity_bytes: capacity,
-                free_bytes: free,
-                temperature: None,
-                wear_percent: None,
-                reallocated: None,
-                pending: None,
-                crc_errors: None,
-                power_on_hours: None,
-                drive_type,
-                health_status: health,
-                bus_type,
-            });
-        }
+fn classify_drive_type(media: &str, bus: &str, removable: bool) -> String {
+    let media = media.to_lowercase();
+    let bus = bus.to_lowercase();
+    if bus == "nvme" {
+        "NVMe".to_string()
+    } else if bus == "usb" || (removable && media.is_empty()) {
+        "USB".to_string()
+    } else if media == "ssd" {
+        "SSD".to_string()
+    } else if media == "hdd" {
+        "HDD".to_string()
+    } else {
+        "Unknown".to_string()
     }
-    // If no drives found via letter scan, fallback to at least C:
-    if drives.is_empty() {
-        // Try .NET directly for C:
-        let out = run_powershell("[System.IO.DriveInfo]::GetDrives() | Select Name,TotalSize,AvailableFreeSpace | ConvertTo-Json -Compress").unwrap_or_default();
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) {
-            let arr: Vec<serde_json::Value> = if v.is_array() {
-                v.as_array().unwrap().clone()
-            } else {
-                vec![v]
-            };
-            for (i, d) in arr.iter().enumerate() {
-                let name = d.get("Name").and_then(|x| x.as_str()).unwrap_or("C:\\");
-                drives.push(DriveInfo {
-                    id: format!("drive{}", i),
-                    letter: Some(
-                        name.trim_end_matches('\\')
-                            .trim_end_matches(':')
-                            .to_string()
-                            + ":",
-                    ),
-                    model: "Generic Drive".to_string(),
-                    serial: format!("generic-{}", i),
-                    capacity_bytes: d.get("TotalSize").and_then(|x| x.as_u64()),
-                    free_bytes: d.get("AvailableFreeSpace").and_then(|x| x.as_u64()),
-                    temperature: None,
-                    wear_percent: None,
-                    reallocated: None,
-                    pending: None,
-                    crc_errors: None,
-                    power_on_hours: None,
-                    drive_type: "Fixed".to_string(),
-                    health_status: None,
-                    bus_type: None,
-                });
-            }
-        }
-    }
-    // Also try to enrich with SMART where possible (best effort, read-only)
-    for d in drives.iter_mut() {
-        if let Some(ref letter) = d.letter.clone() {
-            let smart_script = format!(
-                r#"
-                $ErrorActionPreference='SilentlyContinue';
-                try {{ $c = Get-StorageReliabilityCounter -PhysicalDisk (Get-PhysicalDisk | Select -First 1); @{{temp=$c.Temperature; wear=$c.Wear; hours=$c.PowerOnHours}} | ConvertTo-Json -Compress }} catch {{ 'null' }}
-            "#
-            );
-            if let Ok(out) = run_powershell(&smart_script) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) {
-                    if !v.is_null() {
-                        d.temperature = v.get("temp").and_then(|x| x.as_i64()).map(|x| x as i32);
-                        d.wear_percent = v.get("wear").and_then(|x| x.as_u64()).map(|x| x as u8);
-                        d.power_on_hours =
-                            v.get("hours").and_then(|x| x.as_u64()).map(|x| x as u32);
-                    }
-                }
-            }
-        }
-    }
-    Ok(serde_json::json!({ "drives": drives, "wmi_available": wmi_result.is_ok() }))
 }
 
-// 2. smart — Read SMART attributes per drive, degrade gracefully (read-only, MSStorageDriver)
+fn non_empty(value: Option<&serde_json::Value>) -> Option<String> {
+    value
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn parse_drive_rows(json: &str) -> Result<Vec<DriveInfo>, String> {
+    let value: serde_json::Value = serde_json::from_str(json.trim().trim_start_matches('\u{feff}'))
+        .map_err(|e| format!("could not read drive list: {e}"))?;
+    let rows = match value {
+        serde_json::Value::Array(rows) => rows,
+        serde_json::Value::Null => Vec::new(),
+        single => vec![single],
+    };
+    let mut drives = Vec::new();
+    for row in rows {
+        let Some(letter) = non_empty(row.get("letter")).map(|l| l.to_uppercase()) else {
+            continue;
+        };
+        let removable = row.get("removable").and_then(|v| v.as_bool()).unwrap_or(false);
+        let disk = row.get("disk").filter(|d| d.is_object());
+        let field = |name: &str| disk.and_then(|d| d.get(name));
+        let media = non_empty(field("media")).unwrap_or_default();
+        let bus = non_empty(field("bus"));
+        // Windows reports 0 (or nothing) when a drive does not expose a temperature.
+        let temperature = field("temp")
+            .and_then(|v| v.as_i64())
+            .filter(|t| *t > 0 && *t < 150)
+            .map(|t| t as i32);
+        drives.push(DriveInfo {
+            id: format!("drive-{letter}"),
+            letter: Some(format!("{letter}:")),
+            model: non_empty(field("model")).unwrap_or_else(|| "Unknown model".to_string()),
+            serial: non_empty(field("serial")).unwrap_or_else(|| "unavailable".to_string()),
+            capacity_bytes: row.get("total").and_then(|v| v.as_u64()),
+            free_bytes: row.get("free").and_then(|v| v.as_u64()),
+            temperature,
+            wear_percent: field("wear")
+                .and_then(|v| v.as_u64())
+                .filter(|w| *w <= 100)
+                .map(|w| w as u8),
+            reallocated: None,
+            pending: None,
+            crc_errors: None,
+            power_on_hours: field("hours").and_then(|v| v.as_u64()).map(|h| h as u32),
+            drive_type: classify_drive_type(&media, bus.as_deref().unwrap_or(""), removable),
+            health_status: non_empty(field("health")),
+            bus_type: bus,
+        });
+    }
+    Ok(drives)
+}
+
+fn collect_drives() -> Result<Vec<DriveInfo>, String> {
+    parse_drive_rows(&run_powershell(DRIVE_SCRIPT)?)
+}
+
+#[tauri::command]
+fn drives() -> Result<serde_json::Value, String> {
+    let drives = collect_drives()?;
+    let wmi_available = drives.iter().any(|d| d.bus_type.is_some());
+    Ok(serde_json::json!({ "drives": drives, "wmi_available": wmi_available }))
+}
+
+// 2. smart — Counters for one drive's physical disk; unavailable values stay null (read-only)
 #[tauri::command]
 fn smart(drive_id: String) -> Result<serde_json::Value, String> {
-    let ps = r#"
-        $ErrorActionPreference='SilentlyContinue';
-        $out=@();
-        try { $counters = Get-PhysicalDisk | ForEach { try { Get-StorageReliabilityCounter -PhysicalDisk $_ } catch {} } ; $out += $counters | Select Temperature,Wear,ReadErrorsTotal,ReadErrorsCorrected,WriteErrorsTotal,PowerOnHours,TemperatureMax | ConvertTo-Json -Compress } catch {}
-        try { $wmi = Get-WmiObject -Namespace root\wmi -Class MSStorageDriver_FailurePredictStatus -ErrorAction SilentlyContinue | Select InstanceName,Active,PredictFailure,Reason | ConvertTo-Json -Compress; $out += $wmi } catch {}
-        if ($out.Count -eq 0) { 'null' } else { $out | ConvertTo-Json -Compress }
-    "#;
-    let raw = run_powershell(ps).unwrap_or_else(|_| "null".to_string());
-    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
-    Ok(serde_json::json!({
-        "drive_id": drive_id,
-        "attributes": parsed,
-        "reallocated": serde_json::Value::Null,
-        "pending": serde_json::Value::Null,
-        "wear_percent": serde_json::Value::Null,
-        "temperature": serde_json::Value::Null,
-        "note": "SMART read-only via Get-StorageReliabilityCounter/MSStorageDriver; unavailable fields show as null/unavailable in UI"
-    }))
+    let drive = collect_drives()?.into_iter().find(|d| d.id == drive_id);
+    Ok(match drive {
+        Some(d) => serde_json::json!({
+            "drive_id": drive_id,
+            "available": d.temperature.is_some() || d.wear_percent.is_some() || d.power_on_hours.is_some(),
+            "temperature": d.temperature,
+            "wear_percent": d.wear_percent,
+            "power_on_hours": d.power_on_hours,
+            "reallocated": d.reallocated,
+            "pending": d.pending,
+            "crc_errors": d.crc_errors,
+            "health_status": d.health_status,
+            "note": "Read-only via Get-StorageReliabilityCounter; null means the drive does not expose the value to Windows."
+        }),
+        None => serde_json::json!({ "drive_id": drive_id, "available": false, "note": "Drive not found." }),
+    })
 }
 
 fn normalize_path(path: &Path) -> String {
@@ -843,19 +824,19 @@ fn cleanup(categories: Option<Vec<String>>) -> Result<serde_json::Value, String>
     for cat in filtered.iter() {
         let ps = match cat.as_str() {
             "winTemp" => {
-                r#"Get-ChildItem -Path $env:WINDIR\Temp -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
+                r#"Get-ChildItem -Path $env:WINDIR\Temp -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
             }
             "userTemp" => {
-                r#"Get-ChildItem -Path $env:TEMP -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
+                r#"Get-ChildItem -Path $env:TEMP -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
             }
             "recycleBin" => {
-                r#"Get-ChildItem -Path 'C:\$Recycle.Bin' -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
+                r#"[System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | ForEach-Object { Get-ChildItem -LiteralPath ($_.Name + '$Recycle.Bin') -Recurse -Force -File -ErrorAction SilentlyContinue } | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
             }
             "thumbCache" => {
                 r#"Get-ChildItem -Path "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache*.db" -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
             }
             "deliveryOpt" => {
-                r#"Get-ChildItem -Path "$env:WINDIR\ServiceProfiles\NetworkService\AppData\Local\DeliveryOptimization" -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
+                r#"Get-ChildItem -Path "$env:WINDIR\ServiceProfiles\NetworkService\AppData\Local\DeliveryOptimization" -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select Count,Sum | ConvertTo-Json -Compress"#
             }
             _ => "null",
         };
@@ -1010,6 +991,41 @@ fn scheduler(action: Option<String>) -> Result<serde_json::Value, String> {
         "next_run": serde_json::Value::Null,
         "mode": "read-only"
     }))
+}
+
+#[cfg(test)]
+mod drive_tests {
+    use super::*;
+
+    #[test]
+    fn maps_each_volume_to_its_own_disk_without_guessing() {
+        let json = r#"[
+            {"letter":"c","total":1000,"free":400,"removable":false,"disk":{"model":"Samsung 980","serial":" S6C2 ","media":"SSD","bus":"NVMe","health":"Healthy","temp":41,"wear":7,"hours":812}},
+            {"letter":"D","total":4000,"free":10,"removable":false,"disk":{"model":"WD Blue","serial":"","media":"HDD","bus":"SATA","health":"Healthy","temp":0,"wear":null,"hours":null}},
+            {"letter":"E","total":8,"free":4,"removable":true,"disk":null}
+        ]"#;
+        let drives = parse_drive_rows(json).unwrap();
+        assert_eq!(drives.len(), 3);
+        assert_eq!(drives[0].letter.as_deref(), Some("C:"));
+        assert_eq!(drives[0].drive_type, "NVMe");
+        assert_eq!(drives[0].serial, "S6C2");
+        assert_eq!(drives[0].temperature, Some(41));
+        assert_eq!(drives[0].wear_percent, Some(7));
+        assert_eq!(drives[1].drive_type, "HDD");
+        assert_eq!(drives[1].serial, "unavailable");
+        assert_eq!(drives[1].temperature, None);
+        assert_eq!(drives[1].wear_percent, None);
+        assert_eq!(drives[2].model, "Unknown model");
+        assert_eq!(drives[2].drive_type, "USB");
+        assert_eq!(drives[2].capacity_bytes, Some(8));
+    }
+
+    #[test]
+    fn accepts_single_object_empty_and_bom_output() {
+        assert_eq!(parse_drive_rows("\u{feff}{\"letter\":\"C\",\"total\":1,\"free\":1}").unwrap().len(), 1);
+        assert!(parse_drive_rows("[]").unwrap().is_empty());
+        assert!(parse_drive_rows("not json").is_err());
+    }
 }
 
 #[cfg(test)]
