@@ -2,7 +2,7 @@ import { useMemo, useCallback } from 'react'
 import { formatBytes } from '../lib/drives.js'
 import { CLEANUP_CATEGORIES } from '../lib/cleanup.js'
 
-export default function Cleanup({ enabledIds, setEnabledIds, onPreview, preview, previewing, previewError, log }){
+export default function Cleanup({ enabledIds, setEnabledIds, deletionMode, setDeletionMode, onPreview, preview, previewing, previewError, log }){
   const toggle = useCallback((id)=>{
     setEnabledIds(ids=> ids.includes(id)? ids.filter(x=>x!==id) : [...ids, id])
   }, [setEnabledIds])
@@ -28,12 +28,20 @@ export default function Cleanup({ enabledIds, setEnabledIds, onPreview, preview,
     <div>
       <div className="topbar">
         <h1 className="h1">Cleanup <small style={{color:'var(--amber)',fontWeight:700}}>Preview only — this build never deletes files</small></h1>
+        <div className="top-actions">
+          <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,color:'var(--muted)'}}>
+            <select className="select" value={deletionMode} onChange={e=>setDeletionMode(e.target.value)} style={{width:160}}>
+              <option value="recycle">Recycle Bin (default)</option>
+              <option value="permanent">Permanent delete</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       <div className="alert-banner">
         <span>ℹ</span>
         <div style={{fontSize:12,lineHeight:1.5}}>
-          <b>Preview only:</b> Counts include only files Windows lets this app read (Windows Temp and Delivery Optimization may be partly hidden without administrator rights). No files are deleted.
+          <b>Preview only:</b> No files are deleted. Only allow-listed categories are cleanable. Protected paths (<span className="mono">C:\Windows, Program Files, Documents/Pictures/Desktop/Downloads</span>) are never touched unless you explicitly add them in Settings. Counts include only files Windows lets this app read (Windows Temp and Delivery Optimization may be partly hidden without administrator rights).
         </div>
       </div>
 
@@ -43,6 +51,7 @@ export default function Cleanup({ enabledIds, setEnabledIds, onPreview, preview,
           <div className="card-body" style={{display:'flex',flexDirection:'column',gap:10}}>
             {categoriesList}
             <button className="btn btn-primary" onClick={onPreview} disabled={previewing || enabledIds.length===0}>{previewing ? 'Measuring…' : 'Build preview'}</button>
+            {deletionMode==='permanent' && <div style={{fontSize:11,color:'var(--red)',fontWeight:700}}>Permanent delete will bypass Recycle Bin for this run.</div>}
           </div>
         </div>
 
